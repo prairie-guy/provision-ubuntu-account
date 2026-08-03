@@ -160,7 +160,29 @@ if want git; then
   fi
 fi
 
-# ------------------------------------------------------------------- 4. ssh --
+# -------------------------------------------------------------- 4. dotfiles --
+
+# XDG-located config files that are not covered by any other repo. Without
+# these they exist on exactly one machine and are lost with it.
+if want dotfiles; then
+  # git reads $XDG_CONFIG_HOME/git/ignore as core.excludesFile by default, so
+  # placing the file is enough -- no git config needed.
+  install_dotfile() {
+    local src="$1" dst="$2"
+    if [[ -f "$dst" ]] && cmp -s "$TEMPLATES/$src" "$dst"; then
+      skip "$(basename "$dst") already current"
+      return
+    fi
+    backup "$dst"
+    log "installing $dst"
+    run mkdir -p "$(dirname "$dst")"
+    run cp "$TEMPLATES/$src" "$dst"
+  }
+  install_dotfile git-ignore        "$HOME/.config/git/ignore"
+  install_dotfile zellij-config.kdl "$HOME/.config/zellij/config.kdl"
+fi
+
+# ------------------------------------------------------------------- 5. ssh --
 
 if want ssh; then
   if [[ -f "$HOME/.ssh/id_ed25519" ]]; then
