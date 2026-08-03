@@ -202,8 +202,8 @@ command -v zoxide >/dev/null && eval "$(zoxide init bash)"
 # Make CUDA number devices the way nvidia-smi does. Without this, CUDA orders
 # by "fastest first", so device 0 in your code need not be GPU 0 in nvidia-smi
 # -- which makes CUDA_VISIBLE_DEVICES and any per-user GPU split unreliable.
-# Recommended on any multi-GPU box.
-#export CUDA_DEVICE_ORDER=PCI_BUS_ID
+# Recommended on any multi-GPU box, so this one is ON by default.
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
 
 # Restrict this account to specific GPUs, so concurrent users do not collide
 # on the same card. Indices are as shown by nvidia-smi (with the setting
@@ -228,15 +228,13 @@ command -v zoxide >/dev/null && eval "$(zoxide init bash)"
 #export HF_HOME=/srv/models/huggingface
 #export TORCH_HOME=/srv/models/torch
 
-# --- Needs root: server-side, NOT here ------------------------------------
-# These cannot go in a user's .bashrc -- they require root and would prompt
-# for sudo on every login. They also do not survive a reboot or driver
-# reload, so they belong in a systemd unit in the server provisioning script.
+# --- Power capping and persistence mode -----------------------------------
+# Both need root, so they are not set here. Use ~/bin/gpu-power instead:
 #
-#   sudo nvidia-smi -pm 1          # persistence mode (currently Disabled)
-#   sudo nvidia-smi -pl 500        # cap each card at 500W (default 600, min 150)
+#   gpu-power                 show current caps and total draw
+#   gpu-power 500             cap every GPU at 500W
+#   gpu-power 500 --persist   ...and enable persistence mode
+#   gpu-power --reset         restore defaults
 #
-# Power budget for this box: 4 x 600W default = 2400W for GPUs alone, before
-# CPU and the rest of the system. At 500W each that is 2000W + system, which
-# still exceeds a 20A/120V circuit's 1920W continuous rating -- so on standard
-# 120V wiring you may need a lower cap, or separate circuits.
+# Neither survives a reboot or driver reload -- for a permanent cap, use a
+# systemd unit in the server provisioning script.

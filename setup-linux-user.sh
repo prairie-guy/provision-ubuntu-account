@@ -149,6 +149,22 @@ if want dirs; then
     # superseded by README.md
     [[ -f "$HOME/$d/README.org" ]] && { log "removing stale ~/$d/README.org"; run rm -f "$HOME/$d/README.org"; }
   done
+
+  # Helper scripts into ~/bin, which the bashrc puts on PATH.
+  if [[ -d "$TEMPLATES/bin" ]]; then
+    for f in "$TEMPLATES"/bin/*; do
+      [[ -f "$f" ]] || continue
+      dest="$HOME/bin/$(basename "$f")"
+      if [[ -f "$dest" ]] && cmp -s "$f" "$dest"; then
+        skip "~/bin/$(basename "$f") already current"
+      else
+        backup "$dest"
+        log "installing $dest"
+        run cp "$f" "$dest"
+        run chmod +x "$dest"
+      fi
+    done
+  fi
 fi
 
 # ---------------------------------------------------------------- 2. bashrc --

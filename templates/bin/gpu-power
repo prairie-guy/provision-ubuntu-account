@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+#
+# gpu-power -- show or set the per-GPU power cap and persistence mode.
+#
+# These settings need root, so this calls sudo itself. They are NOT persistent:
+# a reboot or a driver reload resets them. For a permanent cap, install a
+# systemd unit in the server provisioning script -- this is the interactive
+# equivalent, for when you want to change the cap on a running box.
+#
+#   gpu-power                 show current state
+#   gpu-power 500             cap every GPU at 500W
+#   gpu-power 500 --persist   ...and enable persistence mode
+#   gpu-power --reset         restore each GPU's default limit
+#
+set -euo pipefail
+
+command -v nvidia-smi >/dev/null || { echo "nvidia-smi not found -- no NVIDIA driver?" >&2; exit 1; }
+
+WATTS=""
+PERSIST=0
+RESET=0
+
+while (( $# )); do
+  case "$1" in
+    --persist) PERSIST=1; shift ;;
+    --reset)   RESET=1; shift ;;
+    -h|--help) sed -n '3,14p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    [0-9]*)    WATTS="$1"; shift ;;
+    *) echo "unknown argument: $1 (try --help)" >&2; exit 1 ;;
+  esac
+done
+
+show() {
+  printf '\n%-3s %-46s %8s %8s %8s %6s\n' IDX NAME LIMIT DEFAULT MAX PERSIST
+  nvidia-smi --query-gpu=index,name,power.limit,power.default_limit,power.max_limit,persistence_mode \
+             --format=csv,noheader,nounits |
+    while IFS=, read -r i n l d m p; do
+      printf '%-3s %-46s %6.0fW %6.0fW %6.0fW %6s\n' "$i" "${n:0:46}" "$l" "$d" "$m" "$p"
+    done
+  # Total draw at the cap is what actually matters for a circuit.
+  local n cap
+  n=$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)
+  cap=$(nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits | paste -sd+ | bc)
+  printf '\n%s GPUs, %.0fW total at the current cap (before CPU and the rest of the system)\n\n' "$n" "$cap"
+}
+
+if (( ! RESET )) && [[ -z "$WATTS" ]]; then
+  show
+  exit 0
+fi
+
+if (( RESET )); then
+  echo "restoring default power limits (per-GPU default)"
+  # -pl accepts the default when given each GPU's own default value.
+  nvidia-smi --query-gpu=index,power.default_limit --format=csv,noheader,nounits |
+    while IFS=, read -r i d; do
+      sudo nvidia-smi -i "${i// /}" -pl "${d// /}" >/dev/null
+    done
+else
+  # Reject an out-of-range value before touching anything -- a typo here is
+  # otherwise a confusing driver error.
+  # Query a single GPU with --id rather than piping through `head`: closing the
+  # pipe early makes nvidia-smi take SIGPIPE, which `set -o pipefail` turns
+  # into a silent exit 141 before we ever print the error.
+  MIN=$(nvidia-smi --id=0 --query-gpu=power.min_limit --format=csv,noheader,nounits | tr -d ' ')
+  MAX=$(nvidia-smi --id=0 --query-gpu=power.max_limit --format=csv,noheader,nounits | tr -d ' ')
+  if (( $(echo "$WATTS < $MIN" | bc) )) || (( $(echo "$WATTS > $MAX" | bc) )); then
+    echo "refusing ${WATTS}W: outside the supported range ${MIN%.*}-${MAX%.*}W" >&2
+    exit 1
+  fi
+  echo "capping every GPU at ${WATTS}W"
+  sudo nvidia-smi -pl "$WATTS" >/dev/null
+fi
+
+if (( PERSIST )); then
+  echo "enabling persistence mode"
+  sudo nvidia-smi -pm 1 >/dev/null
+fi
+
+show
+echo "NOTE: not persistent -- a reboot or driver reload resets this."
