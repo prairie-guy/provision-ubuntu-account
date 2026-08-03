@@ -51,13 +51,13 @@ esac
 if [ -x /usr/bin/dircolors ]; then
     test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
     alias ls='ls --color=auto'
-    alias dir='dir --color=auto'
     alias grep='grep --color=auto'
     alias fgrep='fgrep --color=auto'
     alias egrep='egrep --color=auto'
 fi
-
-alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo error)" "$(history|tail -n1|sed -e '\''s/^\s*[0-9]\+\s*//;s/[;&|]\s*alert$//'\'')"'
+# NOTE: `dir`/`vdir` are aliased once, further down. The stock Ubuntu bashrc
+# also defines them here, which just gets overridden -- dropped to avoid the
+# confusion of two definitions.
 
 if [ -f ~/.bash_aliases ]; then
     . ~/.bash_aliases
@@ -76,8 +76,8 @@ fi
 #### CBD Edits -----------------------
 
 ### Reminders
-# |& will pipe stdout and stderr.
-#   usage: bedtools intersect -h |& less (works where | does not)
+# |& pipes stdout AND stderr, where a bare | does not.
+#   usage: some-tool --help |& less
 
 ### Define a simple bc bash function
 bcr() { echo "scale=10; $1" | bc; }
@@ -190,8 +190,53 @@ fi
 command -v zoxide >/dev/null && eval "$(zoxide init bash)"
 
 
-### CUDA -----------------------
-# Assumes gpu=0 is reserved for the display. Uncomment as needed.
+### CUDA / GPU -----------------------
+# This is a shared AI box: several accounts use the same GPUs. Everything in
+# this section is PER-USER and safe to set here. Anything needing root (power
+# limits, persistence mode) is server-side -- see the bottom of this section.
+#
+# NOTE: the CUDA runtime comes from the mamba env (conda's cuda-* packages),
+# not from a system CUDA install, so there is no /usr/local/cuda to add to
+# PATH. Only the driver is system-level.
+
+# Make CUDA number devices the way nvidia-smi does. Without this, CUDA orders
+# by "fastest first", so device 0 in your code need not be GPU 0 in nvidia-smi
+# -- which makes CUDA_VISIBLE_DEVICES and any per-user GPU split unreliable.
+# Recommended on any multi-GPU box.
 #export CUDA_DEVICE_ORDER=PCI_BUS_ID
-#export CUDA_VISIBLE_DEVICES=1,2
-#export PATH="/usr/local/cuda/bin:$PATH"
+
+# Restrict this account to specific GPUs, so concurrent users do not collide
+# on the same card. Indices are as shown by nvidia-smi (with the setting
+# above). This box has 4: 0,1,2,3.
+#export CUDA_VISIBLE_DEVICES=0,1
+
+# Reduces fragmentation-related OOMs on long-running jobs. Generally safe.
+#export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# Silences the noisy fork/parallelism warning from HF tokenizers.
+#export TOKENIZERS_PARALLELISM=false
+
+# Keep BLAS/OpenMP from grabbing every core when several users run at once.
+#export OMP_NUM_THREADS=8
+
+# SHARED MODEL CACHE. By default every account downloads its own copy of every
+# model into ~/.cache/huggingface. On a box with 4x96GB cards the models are
+# large enough that this wastes hundreds of GB. Point all accounts at one
+# group-writable directory instead. Requires the directory to exist with a
+# shared group and setgid (server-side setup):
+#   sudo install -d -g gpuusers -m 2775 /srv/models
+#export HF_HOME=/srv/models/huggingface
+#export TORCH_HOME=/srv/models/torch
+
+# --- Needs root: server-side, NOT here ------------------------------------
+# These cannot go in a user's .bashrc -- they require root and would prompt
+# for sudo on every login. They also do not survive a reboot or driver
+# reload, so they belong in a systemd unit in the server provisioning script.
+#
+#   sudo nvidia-smi -pm 1          # persistence mode (currently Disabled)
+#   sudo nvidia-smi -pl 500        # cap each card at 500W (default 600, min 150)
+#
+# Power budget for this box: 4 x 600W default = 2400W for GPUs alone, before
+# CPU and the rest of the system. At 500W each that is 2000W + system, which
+# still exceeds a 20A/120V circuit's 1920W continuous rating -- so on standard
+# 120V wiring you may need a lower cap, or separate circuits.
