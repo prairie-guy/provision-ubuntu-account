@@ -29,7 +29,7 @@ Idempotent: re-running is safe. Existing files are backed up
 | `mamba` | miniforge3, then an env with your chosen name and python version |
 | `node` | `nodejs` (node + npm) into that env |
 | `emacs` | clones the doom config and delegates to its own `setup.sh` |
-| optional | `--claude`, `--codex` |
+| optional | `--ml`, `--claude`, `--codex` |
 
 Run a subset with `--only dirs,git`.
 
@@ -71,6 +71,25 @@ MAMBA_PACKAGES=(
 
 `xclip` is deliberately absent: it is useless on a headless box, where the
 clipboard goes over OSC-52 instead.
+
+## The ML stack (`--ml`)
+
+Not installed by default — it is ~3GB, and most servers have no use for it.
+
+**No GPU detection is needed.** conda exposes the driver as a `__cuda` virtual
+package, so the same package names resolve to CUDA builds on a GPU box and CPU
+builds everywhere else. On this hardware that means PyTorch 2.13 / CUDA 13.0 /
+py3.14, which covers Blackwell's sm_120.
+
+`--ml` installs into the **main** env, matching the "one main env plus throwaway
+envs for experiments" workflow. For anything volatile, prefer a separate env
+over growing the one every shell activates:
+
+```
+mamba create -n experiment-x python=3.14 pytorch transformers
+```
+
+That keeps a torch upgrade from taking `fzf`, `zoxide` and `zellij` down with it.
 
 ## Authorization is offline, by design
 

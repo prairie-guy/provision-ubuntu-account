@@ -45,6 +45,23 @@ MAMBA_PACKAGES=(
 # Node/npm. Installed into the mamba env to keep it out of the system.
 NODE_PACKAGES=(nodejs)
 
+# ML stack. NOT installed unless --ml is given: it is ~3GB and most servers do
+# not need it. Goes into the main env, matching the "one main env plus throwaway
+# envs for experiments" workflow -- for anything volatile, prefer
+#   mamba create -n experiment-x python=3.14 pytorch ...
+# rather than growing the env every shell activates.
+#
+# No GPU detection needed: conda exposes the driver as a __cuda virtual package,
+# so the solver picks CUDA builds where a GPU exists and CPU builds where it
+# does not, from these same names.
+ML_PACKAGES=(
+  pytorch        # pulls cuda-* + triton automatically when __cuda is present
+  numpy
+  pandas
+  matplotlib
+  jupyterlab
+)
+
 # Directories created in $HOME. ~/bin is also prepended to PATH by the bashrc.
 HOME_DIRS=(bin scratch stuff junk)
 
@@ -55,6 +72,7 @@ TEMPLATES="$SCRIPT_DIR/templates"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 CHECK_ONLY=0
+DO_ML=0
 DO_CLAUDE=0
 DO_CODEX=0
 SKIP_APT=0
@@ -77,6 +95,7 @@ while (( $# )); do
     --git-name)   GIT_NAME="${2:?}"; shift 2 ;;
     --git-email)  GIT_EMAIL="${2:?}"; shift 2 ;;
     --mamba-pkgs) MAMBA_PKGS_OVERRIDE="${2:?}"; shift 2 ;;
+    --ml)         DO_ML=1; shift ;;
     --claude)     DO_CLAUDE=1; shift ;;
     --codex)      DO_CODEX=1; shift ;;
     --no-apt)     SKIP_APT=1; shift ;;
@@ -265,7 +284,25 @@ if want node; then
   fi
 fi
 
-# ----------------------------------------------------------------- 8. emacs --
+# -------------------------------------------------------------------- 8. ml --
+
+if (( DO_ML )); then
+  MAMBA="$HOME/miniforge3/bin/mamba"
+  if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/python" ]] \
+     && "$HOME/miniforge3/envs/$ENV_NAME/bin/python" -c 'import torch' 2>/dev/null; then
+    skip "ML stack already present in '$ENV_NAME'"
+  else
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      log "GPU detected; the solver will select CUDA builds"
+    else
+      warn "no GPU detected; the solver will select CPU builds of the same packages"
+    fi
+    log "installing ML stack into '$ENV_NAME' (~3GB): ${ML_PACKAGES[*]}"
+    run "$MAMBA" install -n "$ENV_NAME" -y "${ML_PACKAGES[@]}"
+  fi
+fi
+
+# ----------------------------------------------------------------- 9. emacs --
 
 if want emacs; then
   if [[ -d "$HOME/.config/doom/.git" ]]; then
