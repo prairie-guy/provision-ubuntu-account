@@ -23,7 +23,7 @@ Idempotent: re-running is safe. Existing files are backed up
 | `dirs` | `~/bin` (added to PATH), `~/scratch`, `~/stuff`, `~/junk`; the shared `README.org` explainer into the last three |
 | `bashrc` | installs `templates/bashrc` with the env name substituted, backing up any existing one |
 | `git` | global `user.name`/`user.email`, `init.defaultBranch` |
-| `dotfiles` | global gitignore (`~/.config/git/ignore`) and zellij config — XDG files no other repo carries |
+| `dotfiles` | global gitignore, zellij config, and Claude UI settings — files no other repo carries |
 | `ssh` | ed25519 keypair if absent, then prints the public key to add to GitHub |
 | `apt` | `git curl wget bc less` only — everything else comes from mamba |
 | `mamba` | miniforge3, then an env with your chosen name and python version |

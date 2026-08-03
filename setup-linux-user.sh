@@ -199,6 +199,11 @@ if want dotfiles; then
   }
   install_dotfile git-ignore        "$HOME/.config/git/ignore"
   install_dotfile zellij-config.kdl "$HOME/.config/zellij/config.kdl"
+  # UI preferences only (theme, tui). Deliberately NOT carried from ~/.claude:
+  # .credentials.json (auth tokens), settings.local.json (machine-specific
+  # permissions, and already in the global gitignore), and projects/ sessions/
+  # history.jsonl / cache -- transcripts and regenerable state.
+  install_dotfile claude-settings.json "$HOME/.claude/settings.json"
 fi
 
 # ------------------------------------------------------------------- 5. ssh --

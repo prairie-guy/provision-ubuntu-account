@@ -190,11 +190,6 @@ fi
 command -v zoxide >/dev/null && eval "$(zoxide init bash)"
 
 
-### opencode -----------------------
-# curl -fsSL https://opencode.ai/install | bash
-[ -d "$HOME/.opencode/bin" ] && export PATH="$HOME/.opencode/bin:$PATH"
-
-
 ### CUDA -----------------------
 # Assumes gpu=0 is reserved for the display. Uncomment as needed.
 #export CUDA_DEVICE_ORDER=PCI_BUS_ID
