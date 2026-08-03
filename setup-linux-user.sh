@@ -140,11 +140,14 @@ if want dirs; then
   # three, so whichever one you land in tells you the whole scheme. ~/bin is
   # self-explanatory and gets none.
   for d in scratch stuff junk; do
-    if [[ -f "$HOME/$d/README.org" ]]; then
-      skip "~/$d/README.org exists"
+    if [[ -f "$HOME/$d/README.md" ]] && cmp -s "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md"; then
+      skip "~/$d/README.md already current"
     else
-      run cp "$TEMPLATES/dirs-README.org" "$HOME/$d/README.org"
+      backup "$HOME/$d/README.md"
+      run cp "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md"
     fi
+    # superseded by README.md
+    [[ -f "$HOME/$d/README.org" ]] && { log "removing stale ~/$d/README.org"; run rm -f "$HOME/$d/README.org"; }
   done
 fi
 
