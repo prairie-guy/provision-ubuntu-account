@@ -21,6 +21,57 @@ directory scheme in `templates/dirs-README.md` describes.
 Run it **as the user being provisioned** — never under `sudo`, which would make
 `$HOME` be `/root`. The script refuses to run as root.
 
+## Creating the account first
+
+If the account does not exist yet, create it from an account that has sudo:
+
+```
+sudo adduser scratch          # full account: home, /etc/skel, group, bash shell
+```
+
+Use `adduser`, not `useradd` — `useradd` creates only the passwd entry, with no
+home directory, no skel files and no group. `adduser` prompts for a password,
+then for Full Name / Room / Phone, which you can just press Enter through.
+
+Then log in as that user:
+
+```
+sudo su - scratch             # or: sudo -i -u scratch
+```
+
+The `-` matters: it makes this a *login* shell, so `~/.profile` runs and sources
+`~/.bashrc`. Without it you get the user's identity but your own environment.
+(`login scratch` is not the tool for this — it is what getty runs, and it fails
+with "Cannot possibly work without effective root".)
+
+To reach the account over ssh instead, install your key while you still have
+sudo, or from the account itself once it has a password:
+
+```
+ssh-copy-id scratch@localhost
+```
+
+### Before the clone
+
+Only one thing has to be true: **`git` must already be installed**, since the
+clone below needs it and the script that would install it has not run yet. On a
+server where any account has already been provisioned, it is there. On a
+brand-new server:
+
+```
+sudo apt install git
+```
+
+### First account on a server vs. the rest
+
+| | sudo needed | command |
+|---|---|---|
+| first account on a new server | yes — it installs the system packages | `./provision-ubuntu-account.sh` |
+| every account after that | **no** — the packages are already system-wide | `./provision-ubuntu-account.sh --no-apt` |
+
+A second account does not need to be in the `sudo` group at all. Keep it out of
+it: everything the script does for that account lives under `$HOME`.
+
 Idempotent: re-running is safe. Existing files are backed up
 (`~/.bashrc.bak-<timestamp>`), never silently clobbered.
 
