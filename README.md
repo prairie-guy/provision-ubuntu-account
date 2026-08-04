@@ -134,6 +134,7 @@ Run a subset with `--only dirs,git`.
 | `--ml`, `--claude`, `--codex` | prompted, default no | skip the question by passing the flag |
 | `--no-apt` | off | skip the system-package step even if something is missing |
 | `--only a,b` | all | run just these steps |
+| `--reinstall` | prompted on a provisioned account | re-run the package installs even when already present |
 | `--check` | off | dry run, change nothing |
 
 Defaults also read from the environment: `ENV_NAME`, `PYTHON_VERSION`,
@@ -158,6 +159,19 @@ install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)? [y/N]
 install Claude Code? [y/N]
 install OpenAI Codex CLI? [y/N]
 ```
+
+On an account that has been provisioned before, it also offers:
+
+```
+this account is already provisioned -- refresh components that are already installed? [y/N]
+```
+
+Answering yes (or passing `--reinstall`) re-runs the **package** steps — mamba,
+node, ML, claude, codex — so they pull updates instead of reporting "already
+present". It deliberately does not force the file steps: those compare content
+already, so they pick up a changed template on their own, and forcing them would
+only produce `.bak-` copies of identical files. The ssh key is never regenerated
+by it, since that would invalidate every host the key is registered with.
 
 These are asked **before any work starts**, so a long run never stops for
 input. Passing `--ml`, `--claude` or `--codex` answers the corresponding

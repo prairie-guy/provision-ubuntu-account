@@ -11,6 +11,7 @@
 #   ./provision-ubuntu-account.sh --env ml --python 3.12   # --env skips the prompt
 #   ./provision-ubuntu-account.sh --claude --codex   # include the optional AI CLIs
 #   ./provision-ubuntu-account.sh --only dirs,git    # run just these steps
+#   ./provision-ubuntu-account.sh --reinstall        # refresh what is already installed
 #
 # Idempotent: safe to re-run. Existing files are backed up, never clobbered.
 #
@@ -81,6 +82,7 @@ DO_ML=0
 DO_CLAUDE=0
 DO_CODEX=0
 SKIP_APT=0
+FORCE=0
 ONLY=""
 MAMBA_PKGS_OVERRIDE=""
 
@@ -104,6 +106,7 @@ while (( $# )); do
     --claude)     DO_CLAUDE=1; shift ;;
     --codex)      DO_CODEX=1; shift ;;
     --no-apt)     SKIP_APT=1; shift ;;
+    --reinstall)  FORCE=1; shift ;;
     --only)       ONLY="${2:?--only needs a comma-separated step list}"; shift 2 ;;
     --only=*)     ONLY="${1#*=}"; shift ;;
     -h|--help)    sed -n '2,18p' "$0" | sed 's/^# \?//'; exit 0 ;;
@@ -152,6 +155,14 @@ want() { [[ -z "$ONLY" ]] || [[ ",$ONLY," == *",$1,"* ]]; }
 # Optional installs. A flag already given is taken as the answer, so --ml and
 # friends still work unattended; otherwise ask. Asked here, before any work, so
 # the run does not stop for input part-way through.
+# Offer to refresh things that are already in place. Only worth asking when the
+# account has been provisioned before.
+if (( ! FORCE )) \
+   && { [[ -d "$HOME/miniforge3" ]] || grep -qs 'installed by provision-ubuntu-account.sh' "$HOME/.bashrc"; } \
+   && ask_yn "this account is already provisioned -- refresh components that are already installed?" n; then
+  FORCE=1
+fi
+
 if (( ! DO_ML ))     && ask_yn "install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)?" n; then DO_ML=1; fi
 if (( ! DO_CLAUDE )) && ask_yn "install Claude Code?"                                          n; then DO_CLAUDE=1; fi
 if (( ! DO_CODEX ))  && ask_yn "install OpenAI Codex CLI?"                                     n; then DO_CODEX=1; fi
@@ -242,20 +253,19 @@ fi
 # ---------------------------------------------------------------- 3. bashrc
 
 if want bashrc; then
-  if [[ -f "$HOME/.bashrc" ]] && grep -q 'installed by provision-ubuntu-account.sh' "$HOME/.bashrc" 2>/dev/null \
-     && grep -qxF "mamba activate $ENV_NAME 2>/dev/null" "$HOME/.bashrc" 2>/dev/null; then
-    skip "~/.bashrc already installed for env '$ENV_NAME'"
+  _rendered="$(mktemp)"; trap 'rm -f "$_rendered"' EXIT
+  sed "s/__ENV_NAME__/$ENV_NAME/g" "$TEMPLATES/bashrc" >"$_rendered"
+  if [[ -f "$HOME/.bashrc" ]] && cmp -s "$_rendered" "$HOME/.bashrc"; then
+    skip "~/.bashrc already current for env '$ENV_NAME'"
   else
     backup "$HOME/.bashrc"
     log "installing ~/.bashrc (env: $ENV_NAME)"
     if (( CHECK_ONLY )); then
       printf '    \033[2m[would write]\033[0m %s from templates/bashrc\n' "$HOME/.bashrc"
     else
-      # Write via a temp file: a bare `>` truncates before sed runs, so a
-      # failure would leave an empty ~/.bashrc.
-      _tmp="$HOME/.bashrc.tmp-$STAMP"
-      sed "s/__ENV_NAME__/$ENV_NAME/g" "$TEMPLATES/bashrc" >"$_tmp"
-      mv "$_tmp" "$HOME/.bashrc"
+      # Move the already-rendered file into place: atomic, so a failure cannot
+      # leave a truncated ~/.bashrc.
+      cp "$_rendered" "$HOME/.bashrc"
     fi
   fi
 fi
@@ -385,7 +395,7 @@ if want mamba; then
       && compgen -G "$HOME/miniforge3/envs/$ENV_NAME/conda-meta/${_p}-*.json" >/dev/null \
       || { _pkgs_missing=1; break; }
   done
-  if (( ${#MAMBA_PACKAGES[@]} )) && (( ! _pkgs_missing )); then
+  if (( ${#MAMBA_PACKAGES[@]} )) && (( ! _pkgs_missing )) && (( ! FORCE )); then
     skip "mamba packages already present in '$ENV_NAME'"
   elif (( ${#MAMBA_PACKAGES[@]} )); then
     log "mamba install: ${MAMBA_PACKAGES[*]}"
@@ -402,7 +412,7 @@ if want node; then
   if [[ ! -x "$MAMBA" ]] && (( ! CHECK_ONLY )); then
     die "mamba not found at $MAMBA -- run the mamba step first"
   fi
-  if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/node" ]]; then
+  if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/node" ]] && (( ! FORCE )); then
     skip "node already in env '$ENV_NAME'"
   else
     log "installing node/npm into env '$ENV_NAME': ${NODE_PACKAGES[*]}"
@@ -418,7 +428,7 @@ if want ml && (( DO_ML )); then
     die "mamba not found at $MAMBA -- run the mamba step first"
   fi
   if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/python" ]] \
-     && "$HOME/miniforge3/envs/$ENV_NAME/bin/python" -c 'import torch' 2>/dev/null; then
+     && "$HOME/miniforge3/envs/$ENV_NAME/bin/python" -c 'import torch' 2>/dev/null && (( ! FORCE )); then
     skip "ML stack already present in '$ENV_NAME'"
   else
     if command -v nvidia-smi >/dev/null 2>&1; then
@@ -492,7 +502,7 @@ fi
 # -------------------------------------------------------- 12. optional CLIs
 
 if want claude && (( DO_CLAUDE )); then
-  if command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; then
+  if { command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; } && (( ! FORCE )); then
     skip "claude already installed"
   else
     log "installing Claude Code"
@@ -503,7 +513,7 @@ fi
 
 if want codex && (( DO_CODEX )); then
   NPM="$HOME/miniforge3/envs/$ENV_NAME/bin/npm"
-  if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/codex" ]]; then
+  if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/codex" ]] && (( ! FORCE )); then
     skip "codex already installed"
   elif [[ -x "$NPM" ]] || (( CHECK_ONLY )); then
     log "installing OpenAI Codex CLI via npm (into the '$ENV_NAME' env)"
