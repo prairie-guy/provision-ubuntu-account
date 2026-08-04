@@ -232,6 +232,7 @@ MAMBA_PACKAGES=(
   fzf            # fuzzy finder, aliased to `fz`; wired into bash
   zoxide         # smarter cd, wired into bash
   zellij         # terminal multiplexer
+  ipython        # doom's python REPL (C-c C-b) uses it
 )
 ```
 

@@ -46,6 +46,8 @@ MAMBA_PACKAGES=(
   fzf            # fuzzy finder, aliased to `fz`; wired into bash below
   zoxide         # smarter cd, wired into bash below
   zellij         # terminal multiplexer
+  ipython        # doom's python module uses it for the REPL (C-c C-b); config.el
+                 # tunes +python-ipython-repl-args, which is inert without it
 )
 
 # Node/npm. Installed into the mamba env to keep it out of the system.
@@ -283,7 +285,7 @@ if dotfiles_differ  && ! ask_yn "gitignore / zellij / claude settings differ -- 
 
 # Always-installed components: only worth a question when already present.
 if (( ! FORCE_MAMBA )) && have_mamba_pkgs \
-   && ask_yn "mamba packages (${MAMBA_PACKAGES[0]}, ${MAMBA_PACKAGES[1]}, ...) are installed -- update them?" n; then
+   && ask_yn "mamba packages (${MAMBA_PACKAGES[0]}, ${MAMBA_PACKAGES[1]}, ... ${#MAMBA_PACKAGES[@]} total) are installed -- update them?" n; then
   FORCE_MAMBA=1
 fi
 if (( ! FORCE_NODE )) && have_node \
