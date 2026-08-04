@@ -63,9 +63,23 @@ NODE_PACKAGES=(nodejs)
 ML_PACKAGES=(
   pytorch        # pulls cuda-* + triton automatically when __cuda is present
   numpy
-  pandas
   matplotlib
   jupyterlab
+
+  # polars, with the optional dependencies that pip ships as polars[all].
+  # conda-forge splits it into a thin wrapper plus a runtime; the default
+  # runtime-32 indexes up to ~4.2e9 rows. Swap in polars-runtime-64 if you ever
+  # exceed that -- it is a drop-in replacement, just a larger index type.
+  polars
+  pyarrow        # arrow interop, and polars' parquet/IPC backend
+  connectorx     # read straight from SQL databases into polars
+  deltalake      # delta lake tables (~180MB)
+  fsspec         # remote filesystems: s3, gcs, http
+  xlsx2csv       # polars' xlsx read path
+  openpyxl       # xlsx write path
+
+  pandas         # kept for interop only -- plenty of libraries hand back a
+                 # DataFrame, and polars.from_pandas needs it
 )
 
 # Directories created in $HOME. ~/bin is also prepended to PATH by the bashrc.
@@ -281,7 +295,7 @@ fi
 if (( ! DO_ML )); then
   if have_ml; then
     if ask_yn "the ML stack is installed -- update it?" n; then DO_ML=1; FORCE_ML=1; fi
-  elif ask_yn "install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)?" n; then
+  elif ask_yn "install the ML stack (pytorch, polars, jupyterlab, ~3GB)?" n; then
     DO_ML=1
   fi
 fi

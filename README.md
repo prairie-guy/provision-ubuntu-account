@@ -182,7 +182,7 @@ files in ~/bin or the directory READMEs differ -- replace them?        [Y/n]
 gitignore / zellij / claude settings differ -- replace them?           [Y/n]
 mamba packages (bat, tree, ...) are installed -- update them?          [y/N]
 node/npm is installed -- update it?                                    [y/N]
-install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)?          [y/N]
+install the ML stack (pytorch, polars, jupyterlab, ~3GB)?              [y/N]
 Claude Code is installed -- reinstall it?                              [y/N]
 doom emacs is installed -- reinstall it (deletes ~/.config/emacs)?     [y/N]
 install OpenAI Codex CLI?                                              [y/N]
@@ -243,6 +243,16 @@ clipboard goes over OSC-52 instead.
 ## The ML stack (`--ml`)
 
 Not installed by default — it is ~3GB, and most servers have no use for it.
+
+The dataframe stack is **polars**, with the optional dependencies pip ships as
+`polars[all]`: `pyarrow` (arrow interop and the parquet/IPC backend),
+`connectorx` (read straight from SQL), `deltalake`, `fsspec` (s3/gcs/http),
+and `xlsx2csv`/`openpyxl` for spreadsheets. `pandas` is kept for interop only —
+plenty of libraries hand back a DataFrame, and `polars.from_pandas` needs it.
+
+conda-forge splits polars into a thin wrapper plus a runtime. The default,
+`polars-runtime-32`, indexes up to about 4.2 billion rows; swap in
+`polars-runtime-64` if you ever exceed that.
 
 **No GPU detection is needed.** conda exposes the driver as a `__cuda` virtual
 package, so the same package names resolve to CUDA builds on a GPU box and CPU
