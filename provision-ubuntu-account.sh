@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# setup-linux-user.sh -- provision a USER account, not the server.
+# provision-ubuntu-account.sh -- provision a USER account, not the server.
 #
 # Everything here is per-user and lands under $HOME. The only step that needs
 # sudo is the optional apt install of a few CLI tools; skip it with --no-apt
 # and a parent server-provisioning script can own that instead.
 #
-#   ./setup-linux-user.sh                    # everything except the optional CLIs
-#   ./setup-linux-user.sh --check            # dry run, touch nothing
-#   ./setup-linux-user.sh --env ml --python 3.12
-#   ./setup-linux-user.sh --claude --codex   # include the optional AI CLIs
-#   ./setup-linux-user.sh --only dirs,git    # run just these steps
+#   ./provision-ubuntu-account.sh                    # everything except the optional CLIs
+#   ./provision-ubuntu-account.sh --check            # dry run, touch nothing
+#   ./provision-ubuntu-account.sh --env ml --python 3.12
+#   ./provision-ubuntu-account.sh --claude --codex   # include the optional AI CLIs
+#   ./provision-ubuntu-account.sh --only dirs,git    # run just these steps
 #
 # Idempotent: safe to re-run. Existing files are backed up, never clobbered.
 #
@@ -170,7 +170,7 @@ fi
 # ---------------------------------------------------------------- 2. bashrc --
 
 if want bashrc; then
-  if [[ -f "$HOME/.bashrc" ]] && grep -q 'installed by setup-linux-user.sh' "$HOME/.bashrc" 2>/dev/null \
+  if [[ -f "$HOME/.bashrc" ]] && grep -q 'installed by provision-ubuntu-account.sh' "$HOME/.bashrc" 2>/dev/null \
      && grep -q "mamba activate $ENV_NAME" "$HOME/.bashrc" 2>/dev/null; then
     skip "~/.bashrc already installed for env '$ENV_NAME'"
   else

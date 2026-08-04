@@ -1,13 +1,13 @@
-# setup-linux-user
+# provision-ubuntu-account
 
 Provisions a **user account**, not the server. Everything lands under `$HOME`;
 the only step needing sudo is a small apt install that `--no-apt` skips
 entirely, so a server-level script can own system packages instead.
 
 ```
-git clone <this repo> ~/.config/setup-linux-user
-~/.config/setup-linux-user/setup-linux-user.sh --check   # dry run first
-~/.config/setup-linux-user/setup-linux-user.sh
+git clone <this repo> ~/.config/provision-ubuntu-account
+~/.config/provision-ubuntu-account/provision-ubuntu-account.sh --check   # dry run first
+~/.config/provision-ubuntu-account/provision-ubuntu-account.sh
 ```
 
 Run it **as the user being provisioned** — never under `sudo`, which would make

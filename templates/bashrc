@@ -1,4 +1,4 @@
-#### CBD .bashrc -- installed by setup-linux-user.sh
+#### CBD .bashrc -- installed by provision-ubuntu-account.sh
 #
 # Portable: no hardcoded home directory, so this works for any user. The
 # mamba env name is substituted at install time.
