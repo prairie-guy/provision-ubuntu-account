@@ -6,10 +6,22 @@ already provisioned by `provision-ubuntu-server.sh` this needs no privilege at
 all.
 
 ```
-git clone git@github.com:prairie-guy/provision-ubuntu-account.git ~/stuff/provision-ubuntu-account
+git clone https://github.com/prairie-guy/provision-ubuntu-account.git ~/stuff/provision-ubuntu-account
 cd ~/stuff/provision-ubuntu-account
 ./provision-ubuntu-account.sh --check     # dry run first
 ./provision-ubuntu-account.sh
+```
+
+Clone over **https**, not ssh: a newly created account has no key registered
+with GitHub, so an ssh clone fails with `Permission denied (publickey)` before
+anything else can run. The repo is public, so https needs no credentials.
+
+The script generates an ssh key for the account as it runs and prints the
+public key at the end. Once you have added that at
+<https://github.com/settings/keys>, switch the remote if you want to push:
+
+```
+git remote set-url origin git@github.com:prairie-guy/provision-ubuntu-account.git
 ```
 
 `git clone` creates missing parent directories, so this works on a bare account
@@ -59,11 +71,11 @@ ssh-copy-id scratch@localhost
 2.  log in as that user
 3.  git clone <provision-ubuntu-server>     # git ships with the ISO
 4.  ./provision-ubuntu-server.sh            # system: docker, nvidia, tailscale, mosh, sshd
-5.  git clone <this repo>
+5.  git clone <this repo>            # https; no key registered yet
 6.  ./provision-ubuntu-account.sh           # first account: has sudo, installs system pkgs
 7.  sudo adduser scratch                    # each additional account
 8.  sudo su - scratch
-9.  git clone <this repo>
+9.  git clone <this repo>            # https, as the new user
 10. ./provision-ubuntu-account.sh          # same command; needs no sudo
 ```
 
