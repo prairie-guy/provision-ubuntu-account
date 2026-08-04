@@ -90,6 +90,19 @@ log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 skip() { printf '    \033[2m--  %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
+# Never remove the directory this script lives in, an ancestor of it, $HOME, or
+# /. The clone-failure cleanup below is the only rm -rf here, but DOOMDIR is an
+# overridable env var, so bound it explicitly rather than trusting the caller.
+safe_rmdir() {
+  local target="$1" resolved
+  resolved="$(cd "$target" 2>/dev/null && pwd -P)" || return 0   # absent: nothing to do
+  [[ "$resolved" != "/" ]]        || die "refusing to remove /"
+  [[ "$resolved" != "$HOME" ]]    || die "refusing to remove \$HOME"
+  [[ "$SCRIPT_DIR" != "$resolved" && "$SCRIPT_DIR" != "$resolved"/* ]] \
+    || die "refusing to remove $resolved -- this script lives inside it"
+  rm -rf "$resolved"
+}
+
 run()  { if (( CHECK_ONLY )); then printf '    \033[2m[would run]\033[0m %s\n' "$*"; else "$@"; fi; }
 
 while (( $# )); do
@@ -174,6 +187,26 @@ fi
 if (( ! DO_ML ))     && ask_yn "install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)?" n; then DO_ML=1; fi
 if (( ! DO_CLAUDE )) && ask_yn "install Claude Code?"                                          n; then DO_CLAUDE=1; fi
 if (( ! DO_CODEX ))  && ask_yn "install OpenAI Codex CLI?"                                     n; then DO_CODEX=1; fi
+
+# If anything will need root, ask for it NOW, alongside the other questions, and
+# keep the credential warm. sudo's cache is 15 minutes by default and a full run
+# (miniforge download, doom install) comfortably outlasts it -- without this the
+# emacs step can stop for a password long after you have walked away.
+if want apt && (( ! SKIP_APT )) && [[ $EUID -ne 0 ]] && (( ! CHECK_ONLY )); then
+  _need_root=0
+  for _p in git curl wget bc less; do
+    [[ "$(dpkg-query -W -f='${Status}' "$_p" 2>/dev/null)" == "install ok installed" ]] || _need_root=1
+  done
+  command -v emacs >/dev/null || _need_root=1     # the doom step would install it
+  if (( _need_root )); then
+    log "some system packages are missing; sudo is needed once"
+    sudo -v
+    # Refresh every 60s until this script exits.
+    while sudo -n true 2>/dev/null; do sleep 60; kill -0 "$$" 2>/dev/null || exit; done &
+    SUDO_KEEPALIVE=$!
+    trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null || true' EXIT
+  fi
+fi
 
 # ---------------------------------------------------------------- preflight --
 
@@ -472,8 +505,9 @@ if want emacs; then
       # into a silent, unexplained fallback. A failed clone can still leave a
       # partial directory behind, which would make the https attempt fail with
       # "destination path already exists", so clear it first.
-      if ! git clone "$DOOM_REPO" "$HOME/.config/doom"; then
-        rm -rf "$HOME/.config/doom"
+      if ! GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" \
+           git clone "$DOOM_REPO" "$HOME/.config/doom"; then
+        safe_rmdir "$HOME/.config/doom"
         warn "ssh clone failed (key not registered with GitHub yet?); using https"
         git clone "$DOOM_REPO_HTTPS" "$HOME/.config/doom"
         DOOM_REMOTE_IS_HTTPS=1
