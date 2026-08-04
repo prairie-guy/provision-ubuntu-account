@@ -127,7 +127,7 @@ Run a subset with `--only dirs,git`.
 
 | flag | default | purpose |
 |---|---|---|
-| `--env NAME` | prompted, default `<user>-llm` | mamba environment name; giving the flag skips the prompt |
+| `--env NAME` | prompted, default `llm` | mamba environment name; giving the flag skips the prompt |
 | `--python VER` | `3.14` | python version for that env |
 | `--git-name`, `--git-email` | prairie-guy / `…@users.noreply.github.com` | git identity |
 | `--mamba-pkgs "a b c"` | see below | replace the default package list |
@@ -144,13 +144,12 @@ Defaults also read from the environment: `ENV_NAME`, `PYTHON_VERSION`,
 Run interactively with no `--env`, and the script asks:
 
 ```
-mamba env name [scratch-llm]:
+mamba env name [llm]:
 ```
 
-The default is per-account — `cdaniels-llm`, `scratch-llm` — so several
-accounts on one box have distinct env names even though the environments
-already live under separate homes. It keeps `mamba env list` and shell prompts
-unambiguous when you are switching between accounts. Press Enter to accept it. The prompt is skipped entirely when `--env` is given,
+Press Enter for `llm`, or type another name. On a box with several accounts a
+per-account name such as `scratch-llm` keeps `mamba env list` and the shell
+prompt unambiguous, but that is a choice you make at the prompt, not a default. The prompt is skipped entirely when `--env` is given,
 when `ENV_NAME` is exported, or when there is no terminal to ask on — so a
 parent provisioning script or a piped invocation never blocks. A typed name is
 validated the same way the flag is.
