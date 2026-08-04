@@ -111,7 +111,22 @@ done
 
 [[ -n "$MAMBA_PKGS_OVERRIDE" ]] && read -r -a MAMBA_PACKAGES <<<"$MAMBA_PKGS_OVERRIDE"
 
-# A step runs unless --only was given and does not name it.
+# ENV_NAME is interpolated into a sed replacement and into a grep pattern, so
+# restrict it to characters that are inert in both.
+[[ "$ENV_NAME" =~ ^[A-Za-z0-9._-]+$ ]] \
+  || die "invalid --env '$ENV_NAME': use only letters, digits, dot, dash, underscore"
+
+# A step runs unless --only was given and does not name it. Unknown names are
+# rejected: a typo like --only dir would otherwise run nothing and exit 0,
+# looking like a successful provision.
+VALID_STEPS=(dirs bashrc loginshell git dotfiles ssh apt mamba node ml emacs claude codex)
+if [[ -n "$ONLY" ]]; then
+  IFS=, read -r -a _requested <<<"$ONLY"
+  for _s in "${_requested[@]}"; do
+    [[ " ${VALID_STEPS[*]} " == *" $_s "* ]] \
+      || die "unknown step '$_s'. Valid: ${VALID_STEPS[*]}"
+  done
+fi
 want() { [[ -z "$ONLY" ]] || [[ ",$ONLY," == *",$1,"* ]]; }
 
 # ---------------------------------------------------------------- preflight --
@@ -122,7 +137,7 @@ want() { [[ -z "$ONLY" ]] || [[ ",$ONLY," == *",$1,"* ]]; }
 [[ -d "$TEMPLATES" ]] || die "templates/ not found next to the script"
 
 (( CHECK_ONLY )) && warn "DRY RUN -- nothing will be changed."
-log "user=$USER home=$HOME env=$ENV_NAME python=$PYTHON_VERSION"
+log "user=${USER:-$(id -un)} home=$HOME env=$ENV_NAME python=$PYTHON_VERSION"
 
 # Back up a file before replacing it, once per run.
 backup() {
@@ -132,7 +147,34 @@ backup() {
   run cp -a "$f" "$f.bak-$STAMP"
 }
 
-# ------------------------------------------------------------------- 1. dirs --
+# ------------------------------------------------------------------- 1. apt --
+
+# Runs FIRST: it installs git, which the git, dotfiles, ssh and emacs steps all
+# depend on. On a minimal image git is absent, and using it before this point
+# would abort the run under `set -e`.
+
+# A handful of things genuinely want to be system packages rather than living
+# in a python env. Everything else comes from mamba.
+if want apt && (( ! SKIP_APT )); then
+  # Only things that must exist before/outside the mamba env. `tree`, `bat`,
+  # `fd` etc. come from mamba instead -- do not duplicate them here.
+  APT_PKGS=(git curl wget bc less)
+  missing=()
+  for p in "${APT_PKGS[@]}"; do
+    [[ "$(dpkg-query -W -f='${Status}' "$p" 2>/dev/null)" == "install ok installed" ]] || missing+=("$p")
+  done
+  if (( ${#missing[@]} )); then
+    log "apt install: ${missing[*]}"
+    run sudo apt-get update -qq
+    run sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+  else
+    skip "system CLI packages already present"
+  fi
+elif want apt; then
+  skip "--no-apt given; parent script owns system packages"
+fi
+
+# ------------------------------------------------------------------- 2. dirs
 
 if want dirs; then
   log "creating home directories"
@@ -170,11 +212,11 @@ if want dirs; then
   fi
 fi
 
-# ---------------------------------------------------------------- 2. bashrc --
+# ---------------------------------------------------------------- 3. bashrc
 
 if want bashrc; then
   if [[ -f "$HOME/.bashrc" ]] && grep -q 'installed by provision-ubuntu-account.sh' "$HOME/.bashrc" 2>/dev/null \
-     && grep -q "mamba activate $ENV_NAME" "$HOME/.bashrc" 2>/dev/null; then
+     && grep -qxF "mamba activate $ENV_NAME 2>/dev/null" "$HOME/.bashrc" 2>/dev/null; then
     skip "~/.bashrc already installed for env '$ENV_NAME'"
   else
     backup "$HOME/.bashrc"
@@ -182,12 +224,16 @@ if want bashrc; then
     if (( CHECK_ONLY )); then
       printf '    \033[2m[would write]\033[0m %s from templates/bashrc\n' "$HOME/.bashrc"
     else
-      sed "s/__ENV_NAME__/$ENV_NAME/g" "$TEMPLATES/bashrc" >"$HOME/.bashrc"
+      # Write via a temp file: a bare `>` truncates before sed runs, so a
+      # failure would leave an empty ~/.bashrc.
+      _tmp="$HOME/.bashrc.tmp-$STAMP"
+      sed "s/__ENV_NAME__/$ENV_NAME/g" "$TEMPLATES/bashrc" >"$_tmp"
+      mv "$_tmp" "$HOME/.bashrc"
     fi
   fi
 fi
 
-# --------------------------------------------------------- 3. login shell --
+# --------------------------------------------------------- 4. login shell
 
 # A login shell (ssh, mosh) reads ONLY the first of ~/.bash_profile,
 # ~/.bash_login, ~/.profile that exists -- and Ubuntu puts the `source
@@ -223,7 +269,7 @@ EOF
   fi
 fi
 
-# ------------------------------------------------------------------- 4. git --
+# ------------------------------------------------------------------- 5. git
 
 if want git; then
   if [[ -n "$(git config --global user.email 2>/dev/null)" ]]; then
@@ -237,7 +283,7 @@ if want git; then
   fi
 fi
 
-# -------------------------------------------------------------- 4. dotfiles --
+# -------------------------------------------------------------- 6. dotfiles
 
 # XDG-located config files that are not covered by any other repo. Without
 # these they exist on exactly one machine and are lost with it.
@@ -264,7 +310,7 @@ if want dotfiles; then
   install_dotfile claude-settings.json "$HOME/.claude/settings.json"
 fi
 
-# ------------------------------------------------------------------- 5. ssh --
+# ------------------------------------------------------------------- 7. ssh
 
 if want ssh; then
   if [[ -f "$HOME/.ssh/id_ed25519" ]]; then
@@ -278,30 +324,7 @@ if want ssh; then
   fi
 fi
 
-# ------------------------------------------------------------------- 5. apt --
-
-# A handful of things genuinely want to be system packages rather than living
-# in a python env. Everything else comes from mamba.
-if want apt && (( ! SKIP_APT )); then
-  # Only things that must exist before/outside the mamba env. `tree`, `bat`,
-  # `fd` etc. come from mamba instead -- do not duplicate them here.
-  APT_PKGS=(git curl wget bc less)
-  missing=()
-  for p in "${APT_PKGS[@]}"; do
-    dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "^install ok installed$" || missing+=("$p")
-  done
-  if (( ${#missing[@]} )); then
-    log "apt install: ${missing[*]}"
-    run sudo apt-get update -qq
-    run sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
-  else
-    skip "system CLI packages already present"
-  fi
-elif want apt; then
-  skip "--no-apt given; parent script owns system packages"
-fi
-
-# ----------------------------------------------------------------- 6. mamba --
+# ----------------------------------------------------------------- 8. mamba
 
 if want mamba; then
   if [[ -d "$HOME/miniforge3" ]]; then
@@ -327,7 +350,17 @@ if want mamba; then
     run "$MAMBA" create -n "$ENV_NAME" -y "python=$PYTHON_VERSION"
   fi
 
-  if (( ${#MAMBA_PACKAGES[@]} )); then
+  # Probe before solving: without this every re-run does a full network solve
+  # for the same 8 packages, so a no-op re-run takes minutes.
+  _pkgs_missing=0
+  for _p in "${MAMBA_PACKAGES[@]}"; do
+    [[ -d "$HOME/miniforge3/envs/$ENV_NAME/conda-meta" ]] \
+      && compgen -G "$HOME/miniforge3/envs/$ENV_NAME/conda-meta/${_p}-*.json" >/dev/null \
+      || { _pkgs_missing=1; break; }
+  done
+  if (( ${#MAMBA_PACKAGES[@]} )) && (( ! _pkgs_missing )); then
+    skip "mamba packages already present in '$ENV_NAME'"
+  elif (( ${#MAMBA_PACKAGES[@]} )); then
     log "mamba install: ${MAMBA_PACKAGES[*]}"
     run "$MAMBA" install -n "$ENV_NAME" -y "${MAMBA_PACKAGES[@]}"
   else
@@ -335,10 +368,13 @@ if want mamba; then
   fi
 fi
 
-# ------------------------------------------------------------------ 7. node --
+# ------------------------------------------------------------------ 9. node
 
 if want node; then
   MAMBA="$HOME/miniforge3/bin/mamba"
+  if [[ ! -x "$MAMBA" ]] && (( ! CHECK_ONLY )); then
+    die "mamba not found at $MAMBA -- run the mamba step first"
+  fi
   if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/node" ]]; then
     skip "node already in env '$ENV_NAME'"
   else
@@ -347,10 +383,13 @@ if want node; then
   fi
 fi
 
-# -------------------------------------------------------------------- 8. ml --
+# -------------------------------------------------------------------- 10. ml
 
-if (( DO_ML )); then
+if want ml && (( DO_ML )); then
   MAMBA="$HOME/miniforge3/bin/mamba"
+  if [[ ! -x "$MAMBA" ]] && (( ! CHECK_ONLY )); then
+    die "mamba not found at $MAMBA -- run the mamba step first"
+  fi
   if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/python" ]] \
      && "$HOME/miniforge3/envs/$ENV_NAME/bin/python" -c 'import torch' 2>/dev/null; then
     skip "ML stack already present in '$ENV_NAME'"
@@ -365,7 +404,7 @@ if (( DO_ML )); then
   fi
 fi
 
-# ----------------------------------------------------------------- 9. emacs --
+# ----------------------------------------------------------------- 11. emacs
 
 if want emacs; then
   if [[ -d "$HOME/.config/doom/.git" ]]; then
@@ -374,30 +413,58 @@ if want emacs; then
     log "cloning doom config to ~/.config/doom"
     if (( CHECK_ONLY )); then
       printf '    \033[2m[would clone]\033[0m %s\n' "$DOOM_REPO"
-    elif ! git clone "$DOOM_REPO" "$HOME/.config/doom" 2>/dev/null; then
-      warn "ssh clone failed (key not registered with GitHub yet?); using https"
-      warn "to push later: git -C ~/.config/doom remote set-url origin $DOOM_REPO"
-      git clone "$DOOM_REPO_HTTPS" "$HOME/.config/doom"
+    else
+      # Keep stderr: hiding it turns a host-key prompt or a network failure
+      # into a silent, unexplained fallback. A failed clone can still leave a
+      # partial directory behind, which would make the https attempt fail with
+      # "destination path already exists", so clear it first.
+      if ! git clone "$DOOM_REPO" "$HOME/.config/doom"; then
+        rm -rf "$HOME/.config/doom"
+        warn "ssh clone failed (key not registered with GitHub yet?); using https"
+        git clone "$DOOM_REPO_HTTPS" "$HOME/.config/doom"
+        DOOM_REMOTE_IS_HTTPS=1
+      fi
     fi
+  fi
+
+  # Record the https remote whether or not this run did the cloning -- a
+  # previous run may have fallen back, and the summary needs to say so.
+  if [[ -d "$HOME/.config/doom/.git" ]] \
+     && git -C "$HOME/.config/doom" remote get-url origin 2>/dev/null | grep -q '^https://'; then
+    DOOM_REMOTE_IS_HTTPS=1
   fi
 
   # The doom repo carries its own installer; it handles emacs, doom, vterm deps
   # and its own idempotency. Do not duplicate that logic here.
   if [[ -x "$HOME/.config/doom/setup.sh" ]]; then
     log "delegating to ~/.config/doom/setup.sh"
-    if (( CHECK_ONLY )); then
-      run "$HOME/.config/doom/setup.sh" --check
-    else
-      "$HOME/.config/doom/setup.sh"
+    # --check must actually INVOKE the child with --check. Routing it through
+    # `run` would only print the command, leaving the entire emacs half
+    # uninspected by a dry run.
+    doom_args=()
+    (( CHECK_ONLY )) && doom_args+=(--check)
+    # SKIP_APT is read from the environment by setup.sh, so it has to be
+    # exported, not merely set. Without this, --no-apt is silently ignored by
+    # the emacs half and it calls sudo anyway.
+    # Never abort the whole provision on an emacs failure: everything above has
+    # already succeeded, and the summary below prints the ssh key the user must
+    # upload. Report and carry on.
+    if ! SKIP_APT="$SKIP_APT" "$HOME/.config/doom/setup.sh" "${doom_args[@]}"; then
+      warn "~/.config/doom/setup.sh failed (exit $?). The account is otherwise"
+      warn "provisioned; re-run it directly to see the error:"
+      warn "    ~/.config/doom/setup.sh"
+      EMACS_FAILED=1
     fi
+  elif (( CHECK_ONLY )); then
+    skip "doom setup.sh will exist after the clone above; cannot dry-run it yet"
   else
     warn "~/.config/doom/setup.sh not found or not executable; skipping emacs"
   fi
 fi
 
-# -------------------------------------------------------- 9. optional CLIs --
+# -------------------------------------------------------- 12. optional CLIs
 
-if (( DO_CLAUDE )); then
+if want claude && (( DO_CLAUDE )); then
   if command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; then
     skip "claude already installed"
   else
@@ -407,7 +474,7 @@ if (( DO_CLAUDE )); then
   fi
 fi
 
-if (( DO_CODEX )); then
+if want codex && (( DO_CODEX )); then
   NPM="$HOME/miniforge3/envs/$ENV_NAME/bin/npm"
   if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/codex" ]]; then
     skip "codex already installed"

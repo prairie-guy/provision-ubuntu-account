@@ -35,13 +35,21 @@ show() {
   nvidia-smi --query-gpu=index,name,power.limit,power.default_limit,power.max_limit,persistence_mode \
              --format=csv,noheader,nounits |
     while IFS=, read -r i n l d m p; do
-      printf '%-3s %-46s %6.0fW %6.0fW %6.0fW %6s\n' "$i" "${n:0:46}" "$l" "$d" "$m" "$p"
+      # Cards that do not expose a limit report [N/A]; %f on that aborts the
+      # subshell (and, under pipefail, the whole script) with no output.
+      fmt() { [[ "${1// /}" =~ ^[0-9.]+$ ]] && printf '%6.0fW' "$1" || printf '%7s' "${1// /}"; }
+      printf '%-3s %-46s %s %s %s %6s\n' "$i" "${n:0:46}" "$(fmt "$l")" "$(fmt "$d")" "$(fmt "$m")" "$p"
     done
   # Total draw at the cap is what actually matters for a circuit.
   local n cap
   n=$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)
-  cap=$(nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits | paste -sd+ | bc)
-  printf '\n%s GPUs, %.0fW total at the current cap (before CPU and the rest of the system)\n\n' "$n" "$cap"
+  cap=$(nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits \
+        | tr -d ' ' | grep -E '^[0-9.]+$' | paste -sd+ | bc 2>/dev/null || true)
+  if [[ -n "${cap:-}" ]]; then
+    printf '\n%s GPUs, %.0fW total at the current cap (before CPU and the rest of the system)\n\n' "$n" "$cap"
+  else
+    printf '\n%s GPUs, total cap unavailable (no card reports a power limit)\n\n' "$n"
+  fi
 }
 
 if (( ! RESET )) && [[ -z "$WATTS" ]]; then

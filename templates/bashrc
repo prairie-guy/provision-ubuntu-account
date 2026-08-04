@@ -84,11 +84,20 @@ bcr() { echo "scale=10; $1" | bc; }
 #    usage: bcr 3/7 -> .1764705882
 
 ### Local bins
-export PATH="$HOME/bin:$PATH"
+# Prepend only if not already present, so `source ~/.bashrc` in a configured
+# shell does not grow PATH every time.
+path_prepend() {
+    case ":$PATH:" in
+        *":$1:"*) ;;
+        *) [ -d "$1" ] && PATH="$1:$PATH" ;;
+    esac
+}
+path_prepend "$HOME/bin"
 # ~/.local/bin is where curl-style installers (claude) land. Ubuntu's default
 # ~/.profile adds it only if it exists at login, which is not true on a fresh
 # account, so add it here too.
-[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"
+path_prepend "$HOME/.local/bin"
+export PATH
 
 
 ### Aliases -----------------------
@@ -117,7 +126,8 @@ alias rgac='rga --color=always'
 
 ### Emacs -----------------------
 # doom's binaries (doom sync, doom doctor)
-export PATH="$HOME/.config/emacs/bin:$PATH"
+path_prepend "$HOME/.config/emacs/bin"
+export PATH
 
 # Plain terminal Emacs (NO daemon). This is the default.
 alias e='emacs -nw'
