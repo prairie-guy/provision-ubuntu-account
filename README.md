@@ -1,8 +1,9 @@
 # provision-ubuntu-account
 
 Provisions a **user account**, not the server. Everything lands under `$HOME`;
-the only step needing sudo is a small apt install that `--no-apt` skips
-entirely, so a server-level script can own system packages instead.
+sudo is only ever invoked if a system package is actually missing, so on a box
+already provisioned by `provision-ubuntu-server.sh` this needs no privilege at
+all.
 
 ```
 git clone git@github.com:prairie-guy/provision-ubuntu-account.git ~/stuff/provision-ubuntu-account
@@ -63,22 +64,31 @@ ssh-copy-id scratch@localhost
 7.  sudo adduser scratch                    # each additional account
 8.  sudo su - scratch
 9.  git clone <this repo>
-10. ./provision-ubuntu-account.sh --no-apt  # no sudo needed
+10. ./provision-ubuntu-account.sh          # same command; needs no sudo
 ```
 
 No `apt install git` step is required: git is part of the standard Ubuntu
 Server image. (The installer's **minimized** option does strip it — on such a
 system, `sudo apt install git` before step 3.)
 
-### First account on a server vs. the rest
+### Every account runs the same command
 
-| | sudo needed | command |
-|---|---|---|
-| first account on a new server | yes — it installs the system packages | `./provision-ubuntu-account.sh` |
-| every account after that | **no** — the packages are already system-wide | `./provision-ubuntu-account.sh --no-apt` |
+Both scripts probe with
+`dpkg-query` first and only invoke `sudo` if a package is genuinely missing, so
+once `provision-ubuntu-server.sh` has installed them the apt step is a no-op
+that reports "already present" and never escalates.
 
-A second account does not need to be in the `sudo` group at all. Keep it out of
-it: everything the script does for that account lives under `$HOME`.
+```
+./provision-ubuntu-account.sh
+```
+
+A second account therefore does not need to be in the `sudo` group, and does
+not need `--no-apt`. Keep it out of `sudo`: everything the script does for that
+account lives under `$HOME`.
+
+`--no-apt` remains available for the case where packages *are* missing and you
+want the account script to skip them rather than fail — for instance when a
+parent script will install them later.
 
 Idempotent: re-running is safe. Existing files are backed up
 (`~/.bashrc.bak-<timestamp>`), never silently clobbered.
@@ -87,7 +97,7 @@ Idempotent: re-running is safe. Existing files are backed up
 
 | step | what |
 |---|---|
-| `dirs` | `~/bin` (added to PATH), `~/scratch`, `~/stuff`, `~/junk`; the shared `README.org` explainer into the last three |
+| `dirs` | `~/bin` (added to PATH), `~/scratch`, `~/stuff`, `~/junk`; the shared `README.md` explainer into the last three |
 | `bashrc` | installs `templates/bashrc` with the env name substituted, backing up any existing one |
 | `loginshell` | verifies a login shell actually reaches `~/.bashrc` (see below) |
 | `git` | global `user.name`/`user.email`, `init.defaultBranch` |
@@ -110,7 +120,7 @@ Run a subset with `--only dirs,git`.
 | `--git-name`, `--git-email` | prairie-guy / `…@users.noreply.github.com` | git identity |
 | `--mamba-pkgs "a b c"` | see below | replace the default package list |
 | `--claude`, `--codex` | off | install the AI CLIs |
-| `--no-apt` | off | skip system packages entirely |
+| `--no-apt` | off | skip the system-package step even if something is missing |
 | `--only a,b` | all | run just these steps |
 | `--check` | off | dry run, change nothing |
 
