@@ -93,14 +93,42 @@ die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 # Never remove the directory this script lives in, an ancestor of it, $HOME, or
 # /. The clone-failure cleanup below is the only rm -rf here, but DOOMDIR is an
 # overridable env var, so bound it explicitly rather than trusting the caller.
+# Beyond the hard refusals, always show exactly what is about to go and ask.
 safe_rmdir() {
-  local target="$1" resolved
+  local target="$1" resolved reply
   resolved="$(cd "$target" 2>/dev/null && pwd -P)" || return 0   # absent: nothing to do
   [[ "$resolved" != "/" ]]        || die "refusing to remove /"
   [[ "$resolved" != "$HOME" ]]    || die "refusing to remove \$HOME"
   [[ "$SCRIPT_DIR" != "$resolved" && "$SCRIPT_DIR" != "$resolved"/* ]] \
     || die "refusing to remove $resolved -- this script lives inside it"
+
+  printf '\033[1;31m'
+  printf '=========================================================\n'
+  printf ' ABOUT TO DELETE A DIRECTORY AND EVERYTHING BELOW IT\n'
+  printf '=========================================================\033[0m\n'
+  printf '  path:    %s\n' "$resolved"
+  printf '  size:    %s\n' "$(du -sh "$resolved" 2>/dev/null | cut -f1)"
+  printf '  entries: %s\n' "$(find "$resolved" -mindepth 1 2>/dev/null | wc -l)"
+  if [[ -d "$resolved/.git" ]]; then
+    printf '  git:     %s commit(s), remote %s\n' \
+      "$(git -C "$resolved" rev-list --count HEAD 2>/dev/null || echo 0)" \
+      "$(git -C "$resolved" remote get-url origin 2>/dev/null || echo none)"
+    if ! git -C "$resolved" diff --quiet 2>/dev/null || [[ -n "$(git -C "$resolved" status --porcelain 2>/dev/null)" ]]; then
+      printf '  \033[1;33mWARNING: this repo has uncommitted changes\033[0m\n'
+    fi
+  fi
+  printf '  contents:\n'
+  ls -A "$resolved" 2>/dev/null | head -10 | sed 's/^/    /'
+  [[ "$(ls -A "$resolved" 2>/dev/null | wc -l)" -gt 10 ]] && printf '    ...\n'
+
+  if [[ ! -t 0 ]]; then
+    die "not deleting without confirmation, and there is no terminal to ask on.
+   Remove it yourself and re-run:  rm -rf $resolved"
+  fi
+  read -r -p "type DELETE to remove it, anything else to abort: " reply || true
+  [[ "$reply" == "DELETE" ]] || die "aborted; nothing was removed"
   rm -rf "$resolved"
+  log "removed $resolved"
 }
 
 run()  { if (( CHECK_ONLY )); then printf '    \033[2m[would run]\033[0m %s\n' "$*"; else "$@"; fi; }
