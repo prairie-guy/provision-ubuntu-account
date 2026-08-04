@@ -23,7 +23,10 @@ set -euo pipefail
 ENV_NAME="${ENV_NAME:-llm}"          # --env      mamba environment name
 PYTHON_VERSION="${PYTHON_VERSION:-3.14}"   # --python
 GIT_NAME="${GIT_NAME:-prairie-guy}"        # --git-name
-GIT_EMAIL="${GIT_EMAIL:-cdaniels@nandor.net}"  # --git-email
+# GitHub's noreply form, so a public repo carries no scrapeable address. Commits
+# made with it still attribute correctly on GitHub. Override with --git-email
+# if you want a real address in your commit metadata.
+GIT_EMAIL="${GIT_EMAIL:-prairie-guy@users.noreply.github.com}"  # --git-email
 DOOM_REPO="${DOOM_REPO:-git@github.com:prairie-guy/doom-emacs_dot_file.git}"
 DOOM_REPO_HTTPS="https://github.com/prairie-guy/doom-emacs_dot_file.git"
 
@@ -184,7 +187,43 @@ if want bashrc; then
   fi
 fi
 
-# ------------------------------------------------------------------- 3. git --
+# --------------------------------------------------------- 3. login shell --
+
+# A login shell (ssh, mosh) reads ONLY the first of ~/.bash_profile,
+# ~/.bash_login, ~/.profile that exists -- and Ubuntu puts the `source
+# ~/.bashrc` line in ~/.profile. So if anything ever drops a ~/.bash_profile
+# in place, ~/.profile is silently ignored, ~/.bashrc never loads over ssh,
+# and the whole environment vanishes on login while still working in a
+# subshell. Verify the chain rather than assume it.
+if want loginshell; then
+  first=""
+  for f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+    [[ -f "$f" ]] && { first="$f"; break; }
+  done
+
+  if [[ -z "$first" ]]; then
+    warn "no ~/.bash_profile, ~/.bash_login or ~/.profile -- login shells will"
+    warn "not read ~/.bashrc. Creating a minimal ~/.profile."
+    if (( CHECK_ONLY )); then
+      printf '    \033[2m[would write]\033[0m %s\n' "$HOME/.profile"
+    else
+      cat >"$HOME/.profile" <<'EOF'
+# ~/.profile: read by login shells. Sourcing ~/.bashrc is what makes an
+# interactive login shell pick up the same environment as a subshell.
+[ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
+[ -d "$HOME/.local/bin" ] && PATH="$HOME/.local/bin:$PATH"
+EOF
+    fi
+  elif grep -q 'bashrc' "$first" 2>/dev/null; then
+    skip "login shells read ~/.bashrc via $(basename "$first")"
+  else
+    warn "$first is the file login shells read, and it does NOT source"
+    warn "~/.bashrc -- so ssh/mosh logins will not get your environment."
+    warn "Add this to it:    [ -f \"\$HOME/.bashrc\" ] && . \"\$HOME/.bashrc\""
+  fi
+fi
+
+# ------------------------------------------------------------------- 4. git --
 
 if want git; then
   if [[ -n "$(git config --global user.email 2>/dev/null)" ]]; then

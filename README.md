@@ -22,6 +22,7 @@ Idempotent: re-running is safe. Existing files are backed up
 |---|---|
 | `dirs` | `~/bin` (added to PATH), `~/scratch`, `~/stuff`, `~/junk`; the shared `README.org` explainer into the last three |
 | `bashrc` | installs `templates/bashrc` with the env name substituted, backing up any existing one |
+| `loginshell` | verifies a login shell actually reaches `~/.bashrc` (see below) |
 | `git` | global `user.name`/`user.email`, `init.defaultBranch` |
 | `dotfiles` | global gitignore, zellij config, and Claude UI settings — files no other repo carries |
 | `ssh` | ed25519 keypair if absent, then prints the public key to add to GitHub |
@@ -39,7 +40,7 @@ Run a subset with `--only dirs,git`.
 |---|---|---|
 | `--env NAME` | `llm` | mamba environment name |
 | `--python VER` | `3.14` | python version for that env |
-| `--git-name`, `--git-email` | prairie-guy / cdaniels@nandor.net | git identity |
+| `--git-name`, `--git-email` | prairie-guy / `…@users.noreply.github.com` | git identity |
 | `--mamba-pkgs "a b c"` | see below | replace the default package list |
 | `--claude`, `--codex` | off | install the AI CLIs |
 | `--no-apt` | off | skip system packages entirely |
@@ -101,6 +102,19 @@ provisioning script. The script prints what to run at the end:
 claude      # then follow the login prompt
 codex       # then follow the login prompt
 ```
+
+## Why the `loginshell` check exists
+
+Bash reads **only the first** of `~/.bash_profile`, `~/.bash_login`,
+`~/.profile` that exists. Ubuntu ships the `source ~/.bashrc` line in
+`~/.profile`, so the default chain works — but if anything ever drops a
+`~/.bash_profile` in place, `~/.profile` is silently skipped, `~/.bashrc` never
+loads over ssh, and your whole environment disappears on login while still
+working fine in a subshell. That is an unpleasant thing to debug.
+
+The step verifies the chain rather than assuming it: it finds which file a
+login shell will actually read, and warns if that file does not source
+`~/.bashrc`. If none of the three exists, it writes a minimal `~/.profile`.
 
 ## The ssh / GitHub ordering problem
 
