@@ -177,12 +177,25 @@ Each component is asked about separately, and the wording follows what is
 actually there — `install` when absent, `update`/`reinstall` when present:
 
 ```
-mamba packages (bat, tree, ...) are installed -- update them?  [y/N]
-node/npm is installed -- update it?                            [y/N]
-install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)?  [y/N]
-Claude Code is installed -- reinstall it?                      [y/N]
-install OpenAI Codex CLI?                                      [y/N]
+~/.bashrc differs from the template -- replace it (a backup is kept)?  [Y/n]
+files in ~/bin or the directory READMEs differ -- replace them?        [Y/n]
+gitignore / zellij / claude settings differ -- replace them?           [Y/n]
+mamba packages (bat, tree, ...) are installed -- update them?          [y/N]
+node/npm is installed -- update it?                                    [y/N]
+install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)?          [y/N]
+Claude Code is installed -- reinstall it?                              [y/N]
+doom emacs is installed -- reinstall it (deletes ~/.config/emacs)?     [y/N]
+install OpenAI Codex CLI?                                              [y/N]
 ```
+
+The file questions appear **only when a file has actually drifted** from the
+template, so a steady-state re-run does not ask them at all. They default to
+**yes** — replacing a drifted file is what the script is for — so they are an
+opt-out, and an unattended run still updates. The others default to no.
+
+Reinstalling doom removes `~/.config/emacs` (the doom core and its built
+packages) and rebuilds. It does **not** touch `~/.config/doom`, which is your
+tracked configuration.
 
 Answers are independent: saying yes to mamba does not touch Codex. Components
 that are absent and not opt-in (node) are simply installed without asking.

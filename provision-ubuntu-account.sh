@@ -95,7 +95,7 @@ die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 # overridable env var, so bound it explicitly rather than trusting the caller.
 # Beyond the hard refusals, always show exactly what is about to go and ask.
 safe_rmdir() {
-  local target="$1" resolved reply
+  local target="$1" confirmed="${2:-}" resolved reply
   resolved="$(cd "$target" 2>/dev/null && pwd -P)" || return 0   # absent: nothing to do
   [[ "$resolved" != "/" ]]        || die "refusing to remove /"
   [[ "$resolved" != "$HOME" ]]    || die "refusing to remove \$HOME"
@@ -121,12 +121,16 @@ safe_rmdir() {
   ls -A "$resolved" 2>/dev/null | head -10 | sed 's/^/    /'
   [[ "$(ls -A "$resolved" 2>/dev/null | wc -l)" -gt 10 ]] && printf '    ...\n'
 
-  if [[ ! -t 0 ]]; then
-    die "not deleting without confirmation, and there is no terminal to ask on.
+  # "confirmed" means the user already agreed to this specific removal in the
+  # up-front questions, so do not ask a second time for the same decision.
+  if [[ "$confirmed" != confirmed ]]; then
+    if [[ ! -t 0 ]]; then
+      die "not deleting without confirmation, and there is no terminal to ask on.
    Remove it yourself and re-run:  rm -rf $resolved"
+    fi
+    read -r -p "type DELETE to remove it, anything else to abort: " reply || true
+    [[ "$reply" == "DELETE" ]] || die "aborted; nothing was removed"
   fi
-  read -r -p "type DELETE to remove it, anything else to abort: " reply || true
-  [[ "$reply" == "DELETE" ]] || die "aborted; nothing was removed"
   rm -rf "$resolved"
   log "removed $resolved"
 }
@@ -223,6 +227,45 @@ have_node()   { [[ -x "$ENVDIR/bin/node" ]]; }
 have_ml()     { [[ -x "$ENVDIR/bin/python" ]] && "$ENVDIR/bin/python" -c 'import torch' 2>/dev/null; }
 have_claude() { command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; }
 have_codex()  { [[ -x "$ENVDIR/bin/codex" ]]; }
+have_doom()   { [[ -d "$HOME/.config/emacs" ]]; }
+
+# "differs" = the file exists but no longer matches the template. A file that is
+# absent is simply installed; one that matches is left alone. Only drift is
+# worth a question, so a steady-state re-run asks nothing here.
+RENDERED_BASHRC="$(mktemp)"
+# Single EXIT handler: a second `trap ... EXIT` would silently replace the first.
+cleanup() { rm -f "${RENDERED_BASHRC:-}"; [[ -n "${SUDO_KEEPALIVE:-}" ]] && kill "$SUDO_KEEPALIVE" 2>/dev/null; return 0; }
+trap cleanup EXIT
+sed "s/__ENV_NAME__/$ENV_NAME/g" "$TEMPLATES/bashrc" >"$RENDERED_BASHRC"
+bashrc_differs() { [[ -f "$HOME/.bashrc" ]] && ! cmp -s "$RENDERED_BASHRC" "$HOME/.bashrc"; }
+dirs_differ() {
+  local d f
+  for d in scratch stuff junk; do
+    [[ -f "$HOME/$d/README.md" ]] && ! cmp -s "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md" && return 0
+  done
+  for f in "$TEMPLATES"/bin/*; do
+    [[ -f "$f" && -f "$HOME/bin/$(basename "$f")" ]] \
+      && ! cmp -s "$f" "$HOME/bin/$(basename "$f")" && return 0
+  done
+  return 1
+}
+dotfiles_differ() {
+  local pair src dst
+  for pair in "git-ignore:$HOME/.config/git/ignore" \
+              "zellij-config.kdl:$HOME/.config/zellij/config.kdl" \
+              "claude-settings.json:$HOME/.claude/settings.json"; do
+    src="${pair%%:*}"; dst="${pair#*:}"
+    [[ -f "$dst" ]] && ! cmp -s "$TEMPLATES/$src" "$dst" && return 0
+  done
+  return 1
+}
+
+# Default y: replacing a drifted file is what the script is for, so an
+# unattended run still does it. The question is an opt-OUT, not an opt-in.
+KEEP_BASHRC=0; KEEP_DIRS=0; KEEP_DOTFILES=0
+if bashrc_differs   && ! ask_yn "~/.bashrc differs from the template -- replace it (a backup is kept)?" y; then KEEP_BASHRC=1; fi
+if dirs_differ      && ! ask_yn "files in ~/bin or the directory READMEs differ -- replace them?"       y; then KEEP_DIRS=1; fi
+if dotfiles_differ  && ! ask_yn "gitignore / zellij / claude settings differ -- replace them?"          y; then KEEP_DOTFILES=1; fi
 
 # Always-installed components: only worth a question when already present.
 if (( ! FORCE_MAMBA )) && have_mamba_pkgs \
@@ -249,6 +292,12 @@ if (( ! DO_CLAUDE )); then
     DO_CLAUDE=1
   fi
 fi
+FORCE_EMACS=$FORCE
+if (( ! FORCE_EMACS )) && have_doom \
+   && ask_yn "doom emacs is installed -- reinstall it (deletes ~/.config/emacs and rebuilds, several minutes)?" n; then
+  FORCE_EMACS=1
+fi
+
 if (( ! DO_CODEX )); then
   if have_codex; then
     if ask_yn "Codex CLI is installed -- reinstall it?" n; then DO_CODEX=1; FORCE_CODEX=1; fi
@@ -273,7 +322,6 @@ if want apt && (( ! SKIP_APT )) && [[ $EUID -ne 0 ]] && (( ! CHECK_ONLY )); then
     # Refresh every 60s until this script exits.
     while sudo -n true 2>/dev/null; do sleep 60; kill -0 "$$" 2>/dev/null || exit; done &
     SUDO_KEEPALIVE=$!
-    trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null || true' EXIT
   fi
 fi
 
@@ -325,6 +373,7 @@ fi
 # ------------------------------------------------------------------- 2. dirs
 
 if want dirs; then
+  (( KEEP_DIRS )) && skip "keeping existing ~/bin files and directory READMEs"
   log "creating home directories"
   for d in "${HOME_DIRS[@]}"; do
     if [[ -d "$HOME/$d" ]]; then skip "~/$d exists"; else run mkdir -p "$HOME/$d"; fi
@@ -333,7 +382,7 @@ if want dirs; then
   # three, so whichever one you land in tells you the whole scheme. ~/bin is
   # self-explanatory and gets none.
   for d in scratch stuff junk; do
-    if [[ -f "$HOME/$d/README.md" ]] && cmp -s "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md"; then
+    if [[ -f "$HOME/$d/README.md" ]] && { cmp -s "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md" || (( KEEP_DIRS )); }; then
       skip "~/$d/README.md already current"
     else
       backup "$HOME/$d/README.md"
@@ -348,7 +397,7 @@ if want dirs; then
     for f in "$TEMPLATES"/bin/*; do
       [[ -f "$f" ]] || continue
       dest="$HOME/bin/$(basename "$f")"
-      if [[ -f "$dest" ]] && cmp -s "$f" "$dest"; then
+      if [[ -f "$dest" ]] && { cmp -s "$f" "$dest" || (( KEEP_DIRS )); }; then
         skip "~/bin/$(basename "$f") already current"
       else
         backup "$dest"
@@ -362,9 +411,8 @@ fi
 
 # ---------------------------------------------------------------- 3. bashrc
 
-if want bashrc; then
-  _rendered="$(mktemp)"; trap 'rm -f "$_rendered"' EXIT
-  sed "s/__ENV_NAME__/$ENV_NAME/g" "$TEMPLATES/bashrc" >"$_rendered"
+if want bashrc && (( ! KEEP_BASHRC )); then
+  _rendered="$RENDERED_BASHRC"
   if [[ -f "$HOME/.bashrc" ]] && cmp -s "$_rendered" "$HOME/.bashrc"; then
     skip "~/.bashrc already current for env '$ENV_NAME'"
   else
@@ -439,7 +487,7 @@ if want dotfiles; then
   # placing the file is enough -- no git config needed.
   install_dotfile() {
     local src="$1" dst="$2"
-    if [[ -f "$dst" ]] && cmp -s "$TEMPLATES/$src" "$dst"; then
+    if [[ -f "$dst" ]] && { cmp -s "$TEMPLATES/$src" "$dst" || (( KEEP_DOTFILES )); }; then
       skip "$(basename "$dst") already current"
       return
     fi
@@ -581,6 +629,18 @@ if want emacs; then
         git clone "$DOOM_REPO_HTTPS" "$HOME/.config/doom"
         DOOM_REMOTE_IS_HTTPS=1
       fi
+    fi
+  fi
+
+  # A reinstall means the doom CORE and its built packages (~/.config/emacs),
+  # not the config repo -- that is tracked in git and stays. Already confirmed
+  # by the question above, so this does not ask a second time.
+  if (( FORCE_EMACS )) && [[ -d "$HOME/.config/emacs" ]]; then
+    log "reinstalling doom: removing ~/.config/emacs"
+    if (( CHECK_ONLY )); then
+      printf '    \033[2m[would remove]\033[0m %s\n' "$HOME/.config/emacs"
+    else
+      safe_rmdir "$HOME/.config/emacs" confirmed
     fi
   fi
 
