@@ -84,6 +84,14 @@ ML_PACKAGES=(
                  # DataFrame, and polars.from_pandas needs it
 )
 
+# Rootless Docker. An agent account should NOT be in the `docker` group -- that
+# grants root, since you can bind-mount / into a container. Rootless gives the
+# account its own daemon in its own user namespace instead: containers run as
+# the account, so mounting / shows only what the account could already see.
+# GPUs still work via CDI; the no-cgroups setting below is what makes that
+# possible, because a rootless daemon cannot manage cgroups.
+DOCKER_ROOTLESS_PKGS=(uidmap docker-ce-rootless-extras)   # must already be installed
+
 # Directories created in $HOME. ~/bin is also prepended to PATH by the bashrc.
 HOME_DIRS=(bin scratch stuff junk)
 
@@ -95,6 +103,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 
 CHECK_ONLY=0
 DO_ML=0
+DO_ROOTLESS=0
 DO_CLAUDE=0
 DO_CODEX=0
 SKIP_APT=0
@@ -164,6 +173,7 @@ while (( $# )); do
     --git-email)  GIT_EMAIL="${2:?}"; shift 2 ;;
     --mamba-pkgs) MAMBA_PKGS_OVERRIDE="${2:?}"; shift 2 ;;
     --ml)         DO_ML=1; shift ;;
+    --docker-rootless) DO_ROOTLESS=1; shift ;;
     --claude)     DO_CLAUDE=1; shift ;;
     --codex)      DO_CODEX=1; shift ;;
     --no-apt)     SKIP_APT=1; shift ;;
@@ -211,7 +221,7 @@ fi
 # A step runs unless --only was given and does not name it. Unknown names are
 # rejected: a typo like --only dir would otherwise run nothing and exit 0,
 # looking like a successful provision.
-VALID_STEPS=(dirs bashrc loginshell git dotfiles ssh apt mamba node ml emacs claude codex)
+VALID_STEPS=(dirs bashrc loginshell git dotfiles ssh apt mamba node ml emacs dockerrootless claude codex)
 if [[ -n "$ONLY" ]]; then
   IFS=, read -r -a _requested <<<"$ONLY"
   for _s in "${_requested[@]}"; do
@@ -244,6 +254,7 @@ have_ml()     { [[ -x "$ENVDIR/bin/python" ]] && "$ENVDIR/bin/python" -c 'import
 have_claude() { command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; }
 have_codex()  { [[ -x "$ENVDIR/bin/codex" ]]; }
 have_doom()   { [[ -d "$HOME/.config/emacs" ]]; }
+have_rootless_docker() { [[ -S "/run/user/$(id -u)/docker.sock" ]] || systemctl --user is-enabled docker >/dev/null 2>&1; }
 
 # "differs" = the file exists but no longer matches the template. A file that is
 # absent is simply installed; one that matches is left alone. Only drift is
@@ -308,6 +319,15 @@ if (( ! DO_CLAUDE )); then
     DO_CLAUDE=1
   fi
 fi
+FORCE_ROOTLESS=$FORCE
+if (( ! DO_ROOTLESS )); then
+  if have_rootless_docker; then
+    if ask_yn "rootless Docker is set up -- refresh its config?" n; then DO_ROOTLESS=1; FORCE_ROOTLESS=1; fi
+  elif command -v dockerd-rootless-setuptool.sh >/dev/null && ask_yn "set up rootless Docker for this account (containers without the root-equivalent docker group)?" n; then
+    DO_ROOTLESS=1
+  fi
+fi
+
 FORCE_EMACS=$FORCE
 if (( ! FORCE_EMACS )) && have_doom \
    && ask_yn "doom emacs is installed -- reinstall it (deletes ~/.config/emacs and rebuilds, several minutes)?" n; then
@@ -743,6 +763,10 @@ fi
 
 # These are interactive browser/device logins. They cannot be scripted, and
 # deliberately are not -- credentials should not flow through a setup script.
+if [[ -n "${NEED_LINGER:-}" ]] && ! loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null | grep -qx yes; then
+  warn "rootless docker dies when your last session ends. As an admin, run once:"
+  warn "    sudo loginctl enable-linger $(id -un)"
+fi
 [[ -n "${NEED_AUTH_CLAUDE:-}" ]] && warn "AUTHORIZE (offline, interactive): run 'claude' and follow the login prompt"
 [[ -n "${NEED_AUTH_CODEX:-}" ]]  && warn "AUTHORIZE (offline, interactive): run 'codex' and follow the login prompt"
 exit 0
