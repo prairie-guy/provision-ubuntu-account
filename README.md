@@ -131,7 +131,7 @@ Run a subset with `--only dirs,git`.
 | `--python VER` | `3.14` | python version for that env |
 | `--git-name`, `--git-email` | prairie-guy / `…@users.noreply.github.com` | git identity |
 | `--mamba-pkgs "a b c"` | see below | replace the default package list |
-| `--claude`, `--codex` | off | install the AI CLIs |
+| `--ml`, `--claude`, `--codex` | prompted, default no | skip the question by passing the flag |
 | `--no-apt` | off | skip the system-package step even if something is missing |
 | `--only a,b` | all | run just these steps |
 | `--check` | off | dry run, change nothing |
@@ -139,7 +139,7 @@ Run a subset with `--only dirs,git`.
 Defaults also read from the environment: `ENV_NAME`, `PYTHON_VERSION`,
 `GIT_NAME`, `GIT_EMAIL`.
 
-### The env-name prompt
+### Interactive prompts
 
 Run interactively with no `--env`, and the script asks:
 
@@ -149,7 +149,22 @@ mamba env name [llm]:
 
 Press Enter for `llm`, or type another name. On a box with several accounts a
 per-account name such as `scratch-llm` keeps `mamba env list` and the shell
-prompt unambiguous, but that is a choice you make at the prompt, not a default. The prompt is skipped entirely when `--env` is given,
+prompt unambiguous, but that is a choice you make at the prompt, not a default.
+
+It then asks about the three optional installs, all defaulting to no:
+
+```
+install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)? [y/N]
+install Claude Code? [y/N]
+install OpenAI Codex CLI? [y/N]
+```
+
+These are asked **before any work starts**, so a long run never stops for
+input. Passing `--ml`, `--claude` or `--codex` answers the corresponding
+question and skips it.
+
+`claude` and `codex` are installed but not authenticated — both use an
+interactive browser/device login, which you do afterwards by running each once. The prompt is skipped entirely when `--env` is given,
 when `ENV_NAME` is exported, or when there is no terminal to ask on — so a
 parent provisioning script or a piped invocation never blocks. A typed name is
 validated the same way the flag is.

@@ -113,6 +113,17 @@ done
 
 [[ -n "$MAMBA_PKGS_OVERRIDE" ]] && read -r -a MAMBA_PACKAGES <<<"$MAMBA_PKGS_OVERRIDE"
 
+# Ask a yes/no question. Without a terminal it takes the default silently, so an
+# unattended run never blocks. `read` returns non-zero at EOF; tolerate it.
+ask_yn() {
+  local q="$1" def="${2:-n}" reply hint
+  [[ "$def" == y ]] && hint="[Y/n]" || hint="[y/N]"
+  if [[ ! -t 0 ]]; then [[ "$def" == y ]]; return; fi
+  read -r -p "$q $hint " reply || true
+  reply="${reply:-$def}"
+  [[ "${reply,,}" == y* ]]
+}
+
 # Ask for the env name when it was not specified and someone is there to answer.
 # `read` returns non-zero at EOF, which would abort under `set -e`.
 if (( ! ENV_EXPLICIT )) && [[ -t 0 ]]; then
@@ -137,6 +148,13 @@ if [[ -n "$ONLY" ]]; then
   done
 fi
 want() { [[ -z "$ONLY" ]] || [[ ",$ONLY," == *",$1,"* ]]; }
+
+# Optional installs. A flag already given is taken as the answer, so --ml and
+# friends still work unattended; otherwise ask. Asked here, before any work, so
+# the run does not stop for input part-way through.
+if (( ! DO_ML ))     && ask_yn "install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)?" n; then DO_ML=1; fi
+if (( ! DO_CLAUDE )) && ask_yn "install Claude Code?"                                          n; then DO_CLAUDE=1; fi
+if (( ! DO_CODEX ))  && ask_yn "install OpenAI Codex CLI?"                                     n; then DO_CODEX=1; fi
 
 # ---------------------------------------------------------------- preflight --
 
