@@ -5,10 +5,18 @@ the only step needing sudo is a small apt install that `--no-apt` skips
 entirely, so a server-level script can own system packages instead.
 
 ```
-git clone <this repo> ~/.config/provision-ubuntu-account
-~/.config/provision-ubuntu-account/provision-ubuntu-account.sh --check   # dry run first
-~/.config/provision-ubuntu-account/provision-ubuntu-account.sh
+git clone git@github.com:prairie-guy/provision-ubuntu-account.git ~/stuff/provision-ubuntu-account
+cd ~/stuff/provision-ubuntu-account
+./provision-ubuntu-account.sh --check     # dry run first
+./provision-ubuntu-account.sh
 ```
+
+`git clone` creates missing parent directories, so this works on a bare account
+before `~/stuff` exists — the script creates it properly on its first run.
+
+`~/stuff` rather than `~/.config` because this is a standalone project with its
+own remote, not configuration read by any program. That is the rule the
+directory scheme in `templates/dirs-README.md` describes.
 
 Run it **as the user being provisioned** — never under `sudo`, which would make
 `$HOME` be `/root`. The script refuses to run as root.
