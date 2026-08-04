@@ -51,16 +51,24 @@ sudo, or from the account itself once it has a password:
 ssh-copy-id scratch@localhost
 ```
 
-### Before the clone
-
-Only one thing has to be true: **`git` must already be installed**, since the
-clone below needs it and the script that would install it has not run yet. On a
-server where any account has already been provisioned, it is there. On a
-brand-new server:
+### Where this fits in a full build
 
 ```
-sudo apt install git
+1.  install Ubuntu Server from the ISO      # also creates the first user, with sudo
+2.  log in as that user
+3.  git clone <provision-ubuntu-server>     # git ships with the ISO
+4.  ./provision-ubuntu-server.sh            # system: docker, nvidia, tailscale, mosh, sshd
+5.  git clone <this repo>
+6.  ./provision-ubuntu-account.sh           # first account: has sudo, installs system pkgs
+7.  sudo adduser scratch                    # each additional account
+8.  sudo su - scratch
+9.  git clone <this repo>
+10. ./provision-ubuntu-account.sh --no-apt  # no sudo needed
 ```
+
+No `apt install git` step is required: git is part of the standard Ubuntu
+Server image. (The installer's **minimized** option does strip it — on such a
+system, `sudo apt install git` before step 3.)
 
 ### First account on a server vs. the rest
 
