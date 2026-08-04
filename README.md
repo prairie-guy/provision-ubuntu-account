@@ -127,7 +127,7 @@ Run a subset with `--only dirs,git`.
 
 | flag | default | purpose |
 |---|---|---|
-| `--env NAME` | prompted, default `llm` | mamba environment name; giving the flag skips the prompt |
+| `--env NAME` | prompted, default = the env `~/.bashrc` activates, else `llm` | giving the flag skips the prompt |
 | `--python VER` | `3.14` | python version for that env |
 | `--git-name`, `--git-email` | prairie-guy / `…@users.noreply.github.com` | git identity |
 | `--mamba-pkgs "a b c"` | see below | replace the default package list |
@@ -148,7 +148,20 @@ Run interactively with no `--env`, and the script asks:
 mamba env name [llm]:
 ```
 
-Press Enter for `llm`, or type another name. On a box with several accounts a
+On a re-run the default is whatever `~/.bashrc` currently activates, so
+pressing Enter keeps the environment you already have. On a fresh account it is
+`llm`. Type another name to use a different one.
+
+**Choosing a different name creates a second environment; it never deletes the
+first.** That is the safe default — nothing you installed by hand is lost — but
+the old env stays on disk while no longer being activated, so the script says
+so and prints both ways out:
+
+```
+mamba env remove -n <old>          # reclaim the space
+conda rename -n <old> <new>        # or keep its contents under the new name
+```
+ On a box with several accounts a
 per-account name such as `scratch-llm` keeps `mamba env list` and the shell
 prompt unambiguous, but that is a choice you make at the prompt, not a default.
 

@@ -127,6 +127,14 @@ ask_yn() {
   [[ "${reply,,}" == y* ]]
 }
 
+# Default to whatever ~/.bashrc already activates, so re-running and pressing
+# Enter keeps the existing environment instead of quietly creating a second one.
+BASHRC_ENV=""
+if (( ! ENV_EXPLICIT )) && [[ -f "$HOME/.bashrc" ]]; then
+  BASHRC_ENV="$(sed -n 's/^mamba activate \([A-Za-z0-9._-]\{1,\}\).*/\1/p' "$HOME/.bashrc" 2>/dev/null | tail -1)"
+  [[ -n "$BASHRC_ENV" ]] && ENV_NAME="$BASHRC_ENV"
+fi
+
 # Ask for the env name when it was not specified and someone is there to answer.
 # `read` returns non-zero at EOF, which would abort under `set -e`.
 if (( ! ENV_EXPLICIT )) && [[ -t 0 ]]; then
@@ -385,6 +393,15 @@ if want mamba; then
   else
     log "creating env '$ENV_NAME' with python=$PYTHON_VERSION"
     run "$MAMBA" create -n "$ENV_NAME" -y "python=$PYTHON_VERSION"
+    # Nothing is ever deleted here, so a renamed env leaves the old one behind:
+    # still on disk, no longer activated by ~/.bashrc. Say so rather than let it
+    # sit there unnoticed.
+    if [[ -n "${BASHRC_ENV:-}" && "$BASHRC_ENV" != "$ENV_NAME" \
+          && -d "$HOME/miniforge3/envs/$BASHRC_ENV" ]]; then
+      warn "env '$BASHRC_ENV' still exists but is no longer activated by ~/.bashrc."
+      warn "  keep both, or reclaim the space:  mamba env remove -n $BASHRC_ENV"
+      warn "  (to have renamed it instead:      conda rename -n $BASHRC_ENV $ENV_NAME)"
+    fi
   fi
 
   # Probe before solving: without this every re-run does a full network solve
