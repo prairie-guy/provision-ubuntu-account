@@ -22,7 +22,10 @@ set -euo pipefail
 
 # Prompted for interactively unless --env is given or ENV_NAME is exported.
 if [[ -n "${ENV_NAME:-}" ]]; then ENV_EXPLICIT=1; else ENV_EXPLICIT=0; fi
-ENV_NAME="${ENV_NAME:-llm}"          # --env      mamba environment name
+# Default is per-account (cdaniels-llm, scratch-llm), so several accounts on
+# the same box have distinct env names even though the envs already live in
+# separate homes -- it keeps `mamba env list` and prompts unambiguous.
+ENV_NAME="${ENV_NAME:-$(id -un)-llm}"   # --env   mamba environment name
 PYTHON_VERSION="${PYTHON_VERSION:-3.14}"   # --python
 GIT_NAME="${GIT_NAME:-prairie-guy}"        # --git-name
 # GitHub's noreply form, so a public repo carries no scrapeable address. Commits
