@@ -204,17 +204,58 @@ want() { [[ -z "$ONLY" ]] || [[ ",$ONLY," == *",$1,"* ]]; }
 # Optional installs. A flag already given is taken as the answer, so --ml and
 # friends still work unattended; otherwise ask. Asked here, before any work, so
 # the run does not stop for input part-way through.
-# Offer to refresh things that are already in place. Only worth asking when the
-# account has been provisioned before.
-if (( ! FORCE )) \
-   && { [[ -d "$HOME/miniforge3" ]] || grep -qs 'installed by provision-ubuntu-account.sh' "$HOME/.bashrc"; } \
-   && ask_yn "this account is already provisioned -- refresh components that are already installed?" n; then
-  FORCE=1
+# One question per component, phrased by what is actually there: "install X?"
+# when it is absent, "update X?" when it is not. A single blanket question
+# cannot distinguish updating mamba packages from reinstalling Codex.
+# --reinstall answers "yes, update" to every component that is present.
+ENVDIR="$HOME/miniforge3/envs/$ENV_NAME"
+FORCE_MAMBA=$FORCE; FORCE_NODE=$FORCE; FORCE_ML=$FORCE
+FORCE_CLAUDE=$FORCE; FORCE_CODEX=$FORCE
+
+have_mamba_pkgs() {
+  [[ -d "$ENVDIR/conda-meta" ]] || return 1
+  local pkg
+  for pkg in "${MAMBA_PACKAGES[@]}"; do
+    compgen -G "$ENVDIR/conda-meta/${pkg}-*.json" >/dev/null || return 1
+  done
+}
+have_node()   { [[ -x "$ENVDIR/bin/node" ]]; }
+have_ml()     { [[ -x "$ENVDIR/bin/python" ]] && "$ENVDIR/bin/python" -c 'import torch' 2>/dev/null; }
+have_claude() { command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; }
+have_codex()  { [[ -x "$ENVDIR/bin/codex" ]]; }
+
+# Always-installed components: only worth a question when already present.
+if (( ! FORCE_MAMBA )) && have_mamba_pkgs \
+   && ask_yn "mamba packages (${MAMBA_PACKAGES[0]}, ${MAMBA_PACKAGES[1]}, ...) are installed -- update them?" n; then
+  FORCE_MAMBA=1
+fi
+if (( ! FORCE_NODE )) && have_node \
+   && ask_yn "node/npm is installed -- update it?" n; then
+  FORCE_NODE=1
 fi
 
-if (( ! DO_ML ))     && ask_yn "install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)?" n; then DO_ML=1; fi
-if (( ! DO_CLAUDE )) && ask_yn "install Claude Code?"                                          n; then DO_CLAUDE=1; fi
-if (( ! DO_CODEX ))  && ask_yn "install OpenAI Codex CLI?"                                     n; then DO_CODEX=1; fi
+# Opt-in components: install if absent, update if present.
+if (( ! DO_ML )); then
+  if have_ml; then
+    if ask_yn "the ML stack is installed -- update it?" n; then DO_ML=1; FORCE_ML=1; fi
+  elif ask_yn "install the ML stack (pytorch/numpy/pandas/jupyterlab, ~3GB)?" n; then
+    DO_ML=1
+  fi
+fi
+if (( ! DO_CLAUDE )); then
+  if have_claude; then
+    if ask_yn "Claude Code is installed -- reinstall it?" n; then DO_CLAUDE=1; FORCE_CLAUDE=1; fi
+  elif ask_yn "install Claude Code?" n; then
+    DO_CLAUDE=1
+  fi
+fi
+if (( ! DO_CODEX )); then
+  if have_codex; then
+    if ask_yn "Codex CLI is installed -- reinstall it?" n; then DO_CODEX=1; FORCE_CODEX=1; fi
+  elif ask_yn "install OpenAI Codex CLI?" n; then
+    DO_CODEX=1
+  fi
+fi
 
 # If anything will need root, ask for it NOW, alongside the other questions, and
 # keep the credential warm. sudo's cache is 15 minutes by default and a full run
@@ -473,7 +514,7 @@ if want mamba; then
       && compgen -G "$HOME/miniforge3/envs/$ENV_NAME/conda-meta/${_p}-*.json" >/dev/null \
       || { _pkgs_missing=1; break; }
   done
-  if (( ${#MAMBA_PACKAGES[@]} )) && (( ! _pkgs_missing )) && (( ! FORCE )); then
+  if (( ${#MAMBA_PACKAGES[@]} )) && (( ! _pkgs_missing )) && (( ! FORCE_MAMBA )); then
     skip "mamba packages already present in '$ENV_NAME'"
   elif (( ${#MAMBA_PACKAGES[@]} )); then
     log "mamba install: ${MAMBA_PACKAGES[*]}"
@@ -490,7 +531,7 @@ if want node; then
   if [[ ! -x "$MAMBA" ]] && (( ! CHECK_ONLY )); then
     die "mamba not found at $MAMBA -- run the mamba step first"
   fi
-  if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/node" ]] && (( ! FORCE )); then
+  if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/node" ]] && (( ! FORCE_NODE )); then
     skip "node already in env '$ENV_NAME'"
   else
     log "installing node/npm into env '$ENV_NAME': ${NODE_PACKAGES[*]}"
@@ -506,7 +547,7 @@ if want ml && (( DO_ML )); then
     die "mamba not found at $MAMBA -- run the mamba step first"
   fi
   if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/python" ]] \
-     && "$HOME/miniforge3/envs/$ENV_NAME/bin/python" -c 'import torch' 2>/dev/null && (( ! FORCE )); then
+     && "$HOME/miniforge3/envs/$ENV_NAME/bin/python" -c 'import torch' 2>/dev/null && (( ! FORCE_ML )); then
     skip "ML stack already present in '$ENV_NAME'"
   else
     if command -v nvidia-smi >/dev/null 2>&1; then
@@ -581,7 +622,7 @@ fi
 # -------------------------------------------------------- 12. optional CLIs
 
 if want claude && (( DO_CLAUDE )); then
-  if { command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; } && (( ! FORCE )); then
+  if { command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; } && (( ! FORCE_CLAUDE )); then
     skip "claude already installed"
   else
     log "installing Claude Code"
@@ -592,7 +633,7 @@ fi
 
 if want codex && (( DO_CODEX )); then
   NPM="$HOME/miniforge3/envs/$ENV_NAME/bin/npm"
-  if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/codex" ]] && (( ! FORCE )); then
+  if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/codex" ]] && (( ! FORCE_CODEX )); then
     skip "codex already installed"
   elif [[ -x "$NPM" ]] || (( CHECK_ONLY )); then
     log "installing OpenAI Codex CLI via npm (into the '$ENV_NAME' env)"
