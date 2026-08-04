@@ -138,6 +138,11 @@ git -C ~/.config/doom remote set-url origin git@github.com:prairie-guy/doom-emac
 ## Relationship to the other repos
 
 * `~/.config/doom` — emacs configuration, with its own `setup.sh`. This script
-  clones it and delegates; it does not duplicate that logic.
-* a server-level `setup-linux-server.sh` would handle things this script
-  deliberately does not: tailscale, mosh, the nvidia stack, users, firewall.
+  clones it and delegates; it does not duplicate that logic. It lives in
+  `~/.config` rather than `~/stuff` because it genuinely *is* configuration:
+  Emacs reads it at startup, by that name. (`$DOOMDIR` can override the
+  location, but only where a shell has set it — a systemd-launched daemon
+  would not see it and would silently load a default config instead.)
+* a server-level `provision-ubuntu-server.sh` would handle things this script
+  deliberately does not: tailscale, mosh, the nvidia stack, sshd policy,
+  account creation, firewall, and the GPU power cap as a systemd unit.
