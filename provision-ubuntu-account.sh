@@ -232,7 +232,7 @@ if want git; then
     log "setting global git identity: $GIT_NAME <$GIT_EMAIL>"
     run git config --global user.name  "$GIT_NAME"
     run git config --global user.email "$GIT_EMAIL"
-    run git config --global init.defaultBranch master
+    run git config --global init.defaultBranch main
     run git config --global pull.rebase false
   fi
 fi
