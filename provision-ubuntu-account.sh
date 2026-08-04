@@ -8,7 +8,7 @@
 #
 #   ./provision-ubuntu-account.sh                    # everything except the optional CLIs
 #   ./provision-ubuntu-account.sh --check            # dry run, touch nothing
-#   ./provision-ubuntu-account.sh --env ml --python 3.12
+#   ./provision-ubuntu-account.sh --env ml --python 3.12   # --env skips the prompt
 #   ./provision-ubuntu-account.sh --claude --codex   # include the optional AI CLIs
 #   ./provision-ubuntu-account.sh --only dirs,git    # run just these steps
 #
@@ -20,6 +20,8 @@ set -euo pipefail
 # CONFIGURATION -- edit these, or override with the flags below.
 # ============================================================================
 
+# Prompted for interactively unless --env is given or ENV_NAME is exported.
+if [[ -n "${ENV_NAME:-}" ]]; then ENV_EXPLICIT=1; else ENV_EXPLICIT=0; fi
 ENV_NAME="${ENV_NAME:-llm}"          # --env      mamba environment name
 PYTHON_VERSION="${PYTHON_VERSION:-3.14}"   # --python
 GIT_NAME="${GIT_NAME:-prairie-guy}"        # --git-name
@@ -91,8 +93,8 @@ run()  { if (( CHECK_ONLY )); then printf '    \033[2m[would run]\033[0m %s\n' "
 while (( $# )); do
   case "$1" in
     --check)      CHECK_ONLY=1; shift ;;
-    --env)        ENV_NAME="${2:?--env needs a name}"; shift 2 ;;
-    --env=*)      ENV_NAME="${1#*=}"; shift ;;
+    --env)        ENV_NAME="${2:?--env needs a name}"; ENV_EXPLICIT=1; shift 2 ;;
+    --env=*)      ENV_NAME="${1#*=}"; ENV_EXPLICIT=1; shift ;;
     --python)     PYTHON_VERSION="${2:?--python needs a version}"; shift 2 ;;
     --python=*)   PYTHON_VERSION="${1#*=}"; shift ;;
     --git-name)   GIT_NAME="${2:?}"; shift 2 ;;
@@ -110,6 +112,13 @@ while (( $# )); do
 done
 
 [[ -n "$MAMBA_PKGS_OVERRIDE" ]] && read -r -a MAMBA_PACKAGES <<<"$MAMBA_PKGS_OVERRIDE"
+
+# Ask for the env name when it was not specified and someone is there to answer.
+# `read` returns non-zero at EOF, which would abort under `set -e`.
+if (( ! ENV_EXPLICIT )) && [[ -t 0 ]]; then
+  read -r -p "mamba env name [$ENV_NAME]: " _reply || true
+  [[ -n "${_reply:-}" ]] && ENV_NAME="$_reply"
+fi
 
 # ENV_NAME is interpolated into a sed replacement and into a grep pattern, so
 # restrict it to characters that are inert in both.

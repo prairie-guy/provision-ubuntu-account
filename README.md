@@ -127,7 +127,7 @@ Run a subset with `--only dirs,git`.
 
 | flag | default | purpose |
 |---|---|---|
-| `--env NAME` | `llm` | mamba environment name |
+| `--env NAME` | prompted, default `llm` | mamba environment name; giving the flag skips the prompt |
 | `--python VER` | `3.14` | python version for that env |
 | `--git-name`, `--git-email` | prairie-guy / `…@users.noreply.github.com` | git identity |
 | `--mamba-pkgs "a b c"` | see below | replace the default package list |
@@ -138,6 +138,19 @@ Run a subset with `--only dirs,git`.
 
 Defaults also read from the environment: `ENV_NAME`, `PYTHON_VERSION`,
 `GIT_NAME`, `GIT_EMAIL`.
+
+### The env-name prompt
+
+Run interactively with no `--env`, and the script asks:
+
+```
+mamba env name [llm]:
+```
+
+Press Enter for `llm`. The prompt is skipped entirely when `--env` is given,
+when `ENV_NAME` is exported, or when there is no terminal to ask on — so a
+parent provisioning script or a piped invocation never blocks. A typed name is
+validated the same way the flag is.
 
 ## Customising the package set
 
