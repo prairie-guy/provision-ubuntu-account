@@ -142,6 +142,80 @@ Run a subset with `--only dirs,git`.
 Defaults also read from the environment: `ENV_NAME`, `PYTHON_VERSION`,
 `GIT_NAME`, `GIT_EMAIL`.
 
+## Re-running is safe, and is how you change things
+
+There is no separate "update" mode — **re-running the script *is* the update.**
+It probes the account every time rather than tracking what it did last time, so
+a package you installed by hand, a dotfile you edited, and a run you interrupted
+part-way are all states the next run reads correctly.
+
+On a provisioned account a re-run is mostly `--` skip lines, and in steady state
+it asks **nothing at all**: file steps only raise a question when a file has
+actually drifted from its template, and component steps only when the component
+is already installed.
+
+The rules that make that true:
+
+* **`--check` changes nothing.** Every mutation goes through a `run` wrapper and
+  prints as `[would run]`. The emacs step is passed `--check` through to doom's
+  own installer rather than being skipped, so a dry run covers that half too.
+
+  ```bash
+  ./provision-ubuntu-account.sh --check
+  ./provision-ubuntu-account.sh --check --only mamba,node
+  ```
+
+* **Files are compared before they are written,** and backed up to
+  `NAME.bak-YYYYmmdd-HHMMSS` when they differ. Identical means untouched.
+
+* **Two different defaults, on purpose.** A drifted *file* defaults to **yes,
+  replace it** — restoring the template is what the script is for, and a backup
+  is kept. An absent *component* defaults to **no, do not install** — nothing
+  large or slow arrives because you pressed Enter.
+
+* **No terminal means every default,** so an unattended re-run never blocks.
+
+* **All questions are asked up front**, before any work starts.
+
+### What a re-run will never do
+
+| it will never | why |
+|---|---|
+| regenerate your ssh key | it is registered with GitHub and every host you have copied it to; even `--reinstall` will not touch an existing key |
+| delete an environment | choosing a new `--env` name creates a second one and tells you the old is still on disk |
+| delete a directory silently | the one `rm -rf` (a failed doom clone) prints the path, size, entry count and git state, then requires you to type `DELETE` |
+| remove `$HOME`, or its own directory | `safe_rmdir` hard-refuses `/`, `$HOME`, the script's directory and every ancestor, before it asks anything |
+| overwrite `~/.bashrc` without a backup | timestamped backup first, every time |
+| escalate to sudo | only the `apt` step can, and only for genuinely missing packages — after `provision-ubuntu-server.sh` has run, never |
+| carry credentials between machines | `dotfiles` installs UI settings only; `.credentials.json` and machine-local permissions are deliberately excluded |
+
+### Recipes
+
+| to change | do this | what a later plain re-run does |
+|---|---|---|
+| mamba packages | edit `MAMBA_PACKAGES`, re-run | installs only what is missing |
+| update those packages | `--only mamba --reinstall` | leaves them alone |
+| python version | `--python 3.13 --env NEWNAME` | keeps both envs; activates the one in `~/.bashrc` |
+| switch env | `--env other` | follows `~/.bashrc`, so the new one sticks |
+| add the ML stack later | `--ml` | reports present, does not reinstall |
+| update Claude Code / Codex | `--claude` / `--codex`, answer yes | asks only because they are present; defaults to no |
+| restore a drifted dotfile | just re-run and answer yes | asks only while it differs |
+| change the bashrc template | edit `templates/bashrc`, re-run | offers to replace, keeps a backup |
+| rebuild doom | `--only emacs --reinstall` | syncs, does not rebuild |
+| add rootless docker | `--docker-rootless` | reports already set up |
+
+`--reinstall` answers yes to every already-present component at once — mamba
+packages, node, the ML stack, doom, Claude, Codex. It is the blunt instrument;
+prefer `--only STEP --reinstall` when you mean one thing.
+
+### A note on the GPU driver
+
+This script never touches the nvidia driver — that is entirely
+`provision-ubuntu-server.sh`, which **holds** it so that neither `apt` nor
+`unattended-upgrades` nor a routine re-run can move it. If `nvidia-smi` starts
+reporting a driver/library version mismatch, that is a server-side event, not
+anything a per-account run did.
+
 ### Interactive prompts
 
 Run interactively with no `--env`, and the script asks:
