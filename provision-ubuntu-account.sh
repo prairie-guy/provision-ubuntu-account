@@ -2,14 +2,14 @@
 #
 # provision-ubuntu-account.sh -- provision a USER account, not the server.
 #
-# Everything here is per-user and lands under $HOME. The only step that needs
-# sudo is the optional apt install of a few CLI tools; skip it with --no-apt
-# and a parent server-provisioning script can own that instead.
+# Everything here is per-user and lands under $HOME. On a box already set up by
+# provision-ubuntu-server.sh it needs no sudo at all.
 #
-# RUN IT WITH NO FLAGS. That is the intended way to use this:
+# THERE ARE THREE COMMANDS. That is the whole interface:
 #
-#   ./provision-ubuntu-account.sh --check    # same questions, does nothing
-#   ./provision-ubuntu-account.sh            # <- this
+#   ./provision-ubuntu-account.sh             ask, then do it
+#   ./provision-ubuntu-account.sh --dry-run   ask, then print what it would do
+#   ./provision-ubuntu-account.sh doctor      check this account, offer fixes
 #
 # It asks about each component individually, phrased by what it actually found
 # ("install X?" when absent, "update X?" when present), and asks ALL of them
@@ -17,41 +17,36 @@
 # Enter through everything for the conservative answer. On an account that is
 # already provisioned and has not drifted, it asks nothing at all.
 #
-# The flags below are NOT the interface. They exist so a second account or an
-# unattended run can answer the questions up front:
+# There are no other options, deliberately. Anything consequential enough to
+# want a flag is consequential enough to be asked about, and anything that is a
+# VALUE rather than a decision -- the python version, the package lists, your
+# git identity -- lives in the CONFIGURATION block below, edited once.
 #
-#   ./provision-ubuntu-account.sh --env ml --python 3.12   # --env skips the prompt
-#   ./provision-ubuntu-account.sh --claude --codex   # include the optional AI CLIs
-#   ./provision-ubuntu-account.sh --only dirs,git    # run just these steps
-#   ./provision-ubuntu-account.sh --reinstall        # refresh what is already installed
-#   ./provision-ubuntu-account.sh --docker-rootless  # this account's own docker,
-#                                                    # without the docker group
-#
-# Package lists, python version and git identity are values rather than
-# decisions: they live in the CONFIGURATION block below, edited once.
-#
-# Idempotent: safe to re-run. Existing files are backed up, never clobbered.
+# Idempotent: safe to re-run. Nothing is deleted without naming the file first;
+# replaced files are backed up; your ssh key is never regenerated.
 #
 set -euo pipefail
 
 # ============================================================================
-# CONFIGURATION -- edit these, or override with the flags below.
+# CONFIGURATION -- edit these. This is the only place values are set.
 # ============================================================================
 
-# Prompted for interactively unless --env is given or ENV_NAME is exported.
+# The env name is the one value you are ASKED for, because it differs per
+# account and per box. The prompt defaults to whatever ~/.bashrc already
+# activates, so pressing Enter on a re-run keeps the env you have.
 if [[ -n "${ENV_NAME:-}" ]]; then ENV_EXPLICIT=1; else ENV_EXPLICIT=0; fi
-ENV_NAME="${ENV_NAME:-llm}"          # --env      mamba environment name
-PYTHON_VERSION="${PYTHON_VERSION:-3.14}"   # --python
-GIT_NAME="${GIT_NAME:-prairie-guy}"        # --git-name
+ENV_NAME="${ENV_NAME:-llm}"                # mamba environment name
+PYTHON_VERSION="${PYTHON_VERSION:-3.14}"   # python for that env
+GIT_NAME="${GIT_NAME:-prairie-guy}"        # git user.name
 # GitHub's noreply form, so a public repo carries no scrapeable address. Commits
-# made with it still attribute correctly on GitHub. Override with --git-email
-# if you want a real address in your commit metadata.
-GIT_EMAIL="${GIT_EMAIL:-prairie-guy@users.noreply.github.com}"  # --git-email
+# made with it still attribute correctly on GitHub. Put a real address here if
+# you want one in your commit metadata.
+GIT_EMAIL="${GIT_EMAIL:-prairie-guy@users.noreply.github.com}"  # git user.email
 DOOM_REPO="${DOOM_REPO:-git@github.com:prairie-guy/doom-emacs_dot_file.git}"
 DOOM_REPO_HTTPS="https://github.com/prairie-guy/doom-emacs_dot_file.git"
 
 # Default mamba packages. DELETE ANY LINE YOU DO NOT WANT -- that is the
-# intended way to customise this. Or override wholesale with --mamba-pkgs.
+# intended way to customise this.
 # (xclip was deliberately dropped: useless on a headless box, where the
 # clipboard goes over OSC-52 instead.)
 MAMBA_PACKAGES=(
@@ -70,8 +65,8 @@ MAMBA_PACKAGES=(
 # Node/npm. Installed into the mamba env to keep it out of the system.
 NODE_PACKAGES=(nodejs)
 
-# ML stack. NOT installed unless --ml is given: it is ~3GB and most servers do
-# not need it. Goes into the main env, matching the "one main env plus throwaway
+# ML stack. You are asked about this, and the default is NO: it is ~3GB and most
+# servers do not need it. Goes into the main env, matching the "one main env plus throwaway
 # envs for experiments" workflow -- for anything volatile, prefer
 #   mamba create -n experiment-x python=3.14 pytorch ...
 # rather than growing the env every shell activates.
@@ -239,21 +234,18 @@ fi
 # ENV_NAME is interpolated into a sed replacement and into a grep pattern, so
 # restrict it to characters that are inert in both.
 [[ "$ENV_NAME" =~ ^[A-Za-z0-9._-]+$ ]] \
-  || die "invalid --env '$ENV_NAME': use only letters, digits, dot, dash, underscore"
+  || die "invalid env name '$ENV_NAME': use only letters, digits, dot, dash, underscore"
 
-# A step runs unless --only was given and does not name it. Unknown names are
-# rejected: a typo like --only dir would otherwise run nothing and exit 0,
-# looking like a successful provision.
+# The steps, in the order they run. Used by --help to describe what a run would
+# ask about; every one of them is always reached.
 VALID_STEPS=(dirs bashrc loginshell git dotfiles ssh apt mamba node ml emacs dockerrootless claude codex)
 want() { [[ -z "$ONLY" ]] || [[ ",$ONLY," == *",$1,"* ]]; }
 
-# Optional installs. A flag already given is taken as the answer, so --ml and
-# friends still work unattended; otherwise ask. Asked here, before any work, so
-# the run does not stop for input part-way through.
+# Optional installs. Asked here, before any work, so the run does not stop for
+# input part-way through.
 # One question per component, phrased by what is actually there: "install X?"
 # when it is absent, "update X?" when it is not. A single blanket question
 # cannot distinguish updating mamba packages from reinstalling Codex.
-# --reinstall answers "yes, update" to every component that is present.
 ENVDIR="$HOME/miniforge3/envs/$ENV_NAME"
 FORCE_MAMBA=$FORCE; FORCE_NODE=$FORCE; FORCE_ML=$FORCE
 FORCE_CLAUDE=$FORCE; FORCE_CODEX=$FORCE
@@ -678,7 +670,7 @@ if want apt && (( ! SKIP_APT )); then
     skip "system CLI packages already present"
   fi
 elif want apt; then
-  skip "--no-apt given; parent script owns system packages"
+  skip "system packages are the server script's job"
 fi
 
 # ------------------------------------------------------------------- 2. dirs
@@ -980,14 +972,13 @@ if want emacs; then
   # and its own idempotency. Do not duplicate that logic here.
   if [[ -x "$HOME/.config/doom/setup.sh" ]]; then
     log "delegating to ~/.config/doom/setup.sh"
-    # --check must actually INVOKE the child with --check. Routing it through
+    # A dry run must actually INVOKE the child with --check. Routing it through
     # `run` would only print the command, leaving the entire emacs half
     # uninspected by a dry run.
     doom_args=()
     (( CHECK_ONLY )) && doom_args+=(--check)
     # SKIP_APT is read from the environment by setup.sh, so it has to be
-    # exported, not merely set. Without this, --no-apt is silently ignored by
-    # the emacs half and it calls sudo anyway.
+    # exported, not merely set, or the emacs half calls sudo anyway.
     # Never abort the whole provision on an emacs failure: everything above has
     # already succeeded, and the summary below prints the ssh key the user must
     # upload. Report and carry on.

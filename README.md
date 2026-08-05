@@ -8,7 +8,7 @@ all.
 ```
 git clone https://github.com/prairie-guy/provision-ubuntu-account.git ~/stuff/provision-ubuntu-account
 cd ~/stuff/provision-ubuntu-account
-./provision-ubuntu-account.sh --check     # dry run first
+./provision-ubuntu-account.sh --dry-run   # see what it would do first
 ./provision-ubuntu-account.sh
 ```
 
@@ -27,7 +27,7 @@ git remote set-url origin git@github.com:prairie-guy/provision-ubuntu-account.gi
 `git clone` creates missing parent directories, so this works on a bare account
 before `~/stuff` exists — the script creates it properly on its first run.
 
-## Run it with no flags
+## Run it with no arguments
 
 **That is the intended way to use this, and it is what you want in almost every
 case.** With no arguments the script asks first and executes second:
@@ -45,10 +45,8 @@ restored from the template with a backup kept.
 On an account that is already provisioned and has not drifted, a re-run asks
 **nothing at all** and just reports what it found.
 
-**The flags are not the interface.** They exist so a second account, or an
-unattended run, can answer the questions up front. The only one worth reaching
-for routinely is `--check`, which asks the same questions and then prints what
-it would do instead of doing it.
+Run `--dry-run` first if you want to see what it would do: it asks the same
+questions, then prints the actions instead of taking them.
 
 ### Where the settings live
 
@@ -129,12 +127,8 @@ that reports "already present" and never escalates.
 ```
 
 A second account therefore does not need to be in the `sudo` group, and does
-not need `--no-apt`. Keep it out of `sudo`: everything the script does for that
+not need `sudo` at all. Keep it out of that group: everything the script does for that
 account lives under `$HOME`.
-
-`--no-apt` remains available for the case where packages *are* missing and you
-want the account script to skip them rather than fail — for instance when a
-parent script will install them later.
 
 Idempotent: re-running is safe. Existing files are backed up
 (`~/.bashrc.bak-<timestamp>`), never silently clobbered.
@@ -154,31 +148,41 @@ Idempotent: re-running is safe. Existing files are backed up
 | `node` | `nodejs` (node + npm) into that env |
 | `emacs` | clones the doom config and delegates to its own `setup.sh` |
 | `dockerrootless` | a docker daemon this account owns, without the root-equivalent `docker` group (see below) |
-| optional | `--ml`, `--claude`, `--codex`, `--docker-rootless` |
+| optional | the ML stack, Claude Code, Codex CLI, rootless docker — each asked, each defaulting to no |
 
-Run a subset with `--only dirs,git`.
+Every step is always reached; what it *does* is decided by the question it asked.
 
-## Options
+## The three commands
 
-| flag | default | purpose |
+```bash
+./provision-ubuntu-account.sh             # ask, then do it
+./provision-ubuntu-account.sh --dry-run   # ask, then print what it would do
+./provision-ubuntu-account.sh doctor      # check this account, offer fixes
+./provision-ubuntu-account.sh --help      # live state + everything below, from the script
+```
+
+That is the entire interface. There are no other options, deliberately:
+**anything consequential enough to want a flag is consequential enough to be
+asked about.** The flags this script used to have were each a way to skip being
+asked — `--only` ran a partial provision and left accounts that looked finished,
+`--reinstall` said yes to everything including the doom rebuild that deletes
+`~/.config/emacs`, and `--env`/`--python` silently created a second environment
+alongside the one `~/.bashrc` activates.
+
+An unknown argument tells you where the decision it was trying to make actually
+lives, rather than just failing.
+
+### Where the settings live
+
+| | holds | how you change it |
 |---|---|---|
-| `--env NAME` | prompted, default = the env `~/.bashrc` activates, else `llm` | giving the flag skips the prompt |
-| `--python VER` | `3.14` | python version for that env |
-| `--git-name`, `--git-email` | prairie-guy / `…@users.noreply.github.com` | git identity |
-| `--mamba-pkgs "a b c"` | see below | replace the default package list |
-| `--ml`, `--claude`, `--codex` | prompted, default no | skip the question by passing the flag |
-| `--docker-rootless` | prompted, default no | set up this account's own rootless docker daemon |
-| `--no-apt` | off | skip the system-package step even if something is missing |
-| `--only a,b` | all | run just these steps |
-| `--reinstall` | asked per component | answer yes to every already-present component at once |
-| `--check` | off | dry run, change nothing |
+| **the questions** | *what should happen* — install the ML stack or not, refresh a drifted dotfile or not | answer them at the prompt |
+| **the `CONFIGURATION` block** at the top of the script | *what values to use* — `PYTHON_VERSION`, `MAMBA_PACKAGES`, `ML_PACKAGES`, `GIT_NAME`, `GIT_EMAIL`, `HOME_DIRS`, `DOOM_REPO` | edit those lines once |
+| **`templates/`** | the *content* of the files it installs — `~/.bashrc`, the dotfiles, `~/bin` scripts | edit the template |
 
-None of these are needed for a normal run — the questions cover every decision.
-They are for answering up front, so a second account or an unattended run does
-not need you at the keyboard.
-
-Defaults also read from the environment: `ENV_NAME`, `PYTHON_VERSION`,
-`GIT_NAME`, `GIT_EMAIL`.
+The mamba environment name is the one value you are *asked* for, because it
+differs per account and per box. `./provision-ubuntu-account.sh --help` prints
+every setting with its current value.
 
 ## Re-running is safe, and is how you change things
 
@@ -194,13 +198,12 @@ is already installed.
 
 The rules that make that true:
 
-* **`--check` changes nothing.** Every mutation goes through a `run` wrapper and
-  prints as `[would run]`. The emacs step is passed `--check` through to doom's
+* **`--dry-run` changes nothing.** Every mutation goes through a `run` wrapper and
+  prints as `[would run]`. The emacs step passes the dry run through to doom's
   own installer rather than being skipped, so a dry run covers that half too.
 
   ```bash
-  ./provision-ubuntu-account.sh --check
-  ./provision-ubuntu-account.sh --check --only mamba,node
+  ./provision-ubuntu-account.sh --dry-run
   ```
 
 * **Files are compared before they are written,** and backed up to
@@ -219,8 +222,8 @@ The rules that make that true:
 
 | it will never | why |
 |---|---|
-| regenerate your ssh key | it is registered with GitHub and every host you have copied it to; even `--reinstall` will not touch an existing key |
-| delete an environment | choosing a new `--env` name creates a second one and tells you the old is still on disk |
+| regenerate your ssh key | it is registered with GitHub and every host you have copied it to; nothing regenerates an existing key |
+| delete an environment | typing a new env name creates a second one and tells you the old is still on disk |
 | delete a directory silently | the one `rm -rf` (a failed doom clone) prints the path, size, entry count and git state, then requires you to type `DELETE` |
 | remove `$HOME`, or its own directory | `safe_rmdir` hard-refuses `/`, `$HOME`, the script's directory and every ancestor, before it asks anything |
 | overwrite `~/.bashrc` without a backup | timestamped backup first, every time |
@@ -229,26 +232,51 @@ The rules that make that true:
 
 ### Recipes
 
-**The plain interactive run handles most of these** — re-run with no flags and
-answer the question about the thing you want to change. These are the unattended
-equivalents, for when you already know the answer.
+Everything is either a question you answer during a normal run, or a value you
+edit once. There is no third way.
 
-| to change | do this | what a later plain re-run does |
-|---|---|---|
-| mamba packages | edit `MAMBA_PACKAGES`, re-run | installs only what is missing |
-| update those packages | `--only mamba --reinstall` | leaves them alone |
-| python version | `--python 3.13 --env NEWNAME` | keeps both envs; activates the one in `~/.bashrc` |
-| switch env | `--env other` | follows `~/.bashrc`, so the new one sticks |
-| add the ML stack later | `--ml` | reports present, does not reinstall |
-| update Claude Code / Codex | `--claude` / `--codex`, answer yes | asks only because they are present; defaults to no |
-| restore a drifted dotfile | just re-run and answer yes | asks only while it differs |
-| change the bashrc template | edit `templates/bashrc`, re-run | offers to replace, keeps a backup |
-| rebuild doom | `--only emacs --reinstall` | syncs, does not rebuild |
-| add rootless docker | `--docker-rootless` | reports already set up |
+| to change | how |
+|---|---|
+| mamba packages | edit `MAMBA_PACKAGES`, re-run |
+| update those packages | answer yes to "mamba packages are installed — update them?" |
+| python version | edit `PYTHON_VERSION`, then give a new env name at the prompt |
+| switch env | type another name at the env prompt (the old one is kept, not deleted) |
+| add the ML stack later | answer yes to "install the ML stack?" |
+| update Claude Code / Codex | answer yes when it says they are installed |
+| restore a drifted dotfile | re-run; it names the files and asks |
+| change what `~/.bashrc` contains | edit `templates/bashrc`, re-run |
+| rebuild doom | answer yes to "doom emacs is installed — reinstall it?" |
+| add rootless docker | answer yes to the rootless docker question |
 
-`--reinstall` answers yes to every already-present component at once — mamba
-packages, node, the ML stack, doom, Claude, Codex. It is the blunt instrument;
-prefer `--only STEP --reinstall` when you mean one thing.
+## doctor
+
+```bash
+./provision-ubuntu-account.sh doctor
+```
+
+Checks the account and offers each fix one at a time, read-only until you accept
+one. Beyond the obvious component checks it catches two things that otherwise
+fail silently:
+
+* a `~/.bashrc` that activates a mamba env which no longer exists — every new
+  shell then fails to activate it
+* a login-shell chain that never reaches `~/.bashrc`, so ssh sessions get a
+  different environment from local ones
+
+For rootless docker it checks each separately-breakable piece — socket,
+`daemon.json`, `no-cgroups`, linger, docker group — because any one of them
+failing shows up only as a container that will not start.
+
+```
+OK    miniforge3 installed
+OK    env 'llm' exists (python 3.14.6)
+OK    ~/.bashrc activates env 'llm'
+OK    .profile sources ~/.bashrc
+WARN  ~/.bashrc differs from the template
+OK    ssh key present
+```
+
+Exit status is 1 if anything FAILed.
 
 ### A note on the GPU driver
 
@@ -260,7 +288,7 @@ anything a per-account run did.
 
 ### Interactive prompts
 
-Run interactively with no `--env`, and the script asks:
+On every run the script asks:
 
 ```
 mamba env name [llm]:
@@ -318,7 +346,7 @@ tracked configuration.
 Answers are independent: saying yes to mamba does not touch Codex. Components
 that are absent and not opt-in (node) are simply installed without asking.
 
-`--reinstall` answers yes to every component that is already present, for
+Answering yes to each component in turn refreshes what is present, for
 unattended use. Neither the prompts nor the flag force the **file** steps —
 those compare content already, so they pick up a changed template on their own,
 and forcing them would only produce `.bak-` copies of identical files. The ssh
@@ -326,11 +354,11 @@ key is never regenerated, since that would invalidate every host it is
 registered with.
 
 These are asked **before any work starts**, so a long run never stops for
-input. Passing `--ml`, `--claude` or `--codex` answers the corresponding
+input. Each optional component has its own question, which answers the corresponding
 question and skips it.
 
 `claude` and `codex` are installed but not authenticated — both use an
-interactive browser/device login, which you do afterwards by running each once. The prompt is skipped entirely when `--env` is given,
+interactive browser/device login, which you do afterwards by running each once.
 when `ENV_NAME` is exported, or when there is no terminal to ask on — so a
 parent provisioning script or a piped invocation never blocks. A typed name is
 validated the same way the flag is.
@@ -354,12 +382,12 @@ MAMBA_PACKAGES=(
 )
 ```
 
-`--mamba-pkgs "bat fzf"` overrides the list for one run without editing.
+Deleting a line from `MAMBA_PACKAGES` is the intended way to slim it down.
 
 `xclip` is deliberately absent: it is useless on a headless box, where the
 clipboard goes over OSC-52 instead.
 
-## The ML stack (`--ml`)
+## The ML stack
 
 Not installed by default — it is ~3GB, and most servers have no use for it.
 
@@ -378,7 +406,7 @@ package, so the same package names resolve to CUDA builds on a GPU box and CPU
 builds everywhere else. On this hardware that means PyTorch 2.13 / CUDA 13.0 /
 py3.14, which covers Blackwell's sm_120.
 
-`--ml` installs into the **main** env, matching the "one main env plus throwaway
+The ML stack installs into the **main** env, matching the "one main env plus throwaway
 envs for experiments" workflow. For anything volatile, prefer a separate env
 over growing the one every shell activates:
 
