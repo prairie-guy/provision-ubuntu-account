@@ -179,9 +179,15 @@ safe_rmdir() {
 
 run()  { if (( CHECK_ONLY )); then printf '    \033[2m[would run]\033[0m %s\n' "$*"; else "$@"; fi; }
 
+# A subcommand, not a flag: doctor reports on the account and offers fixes,
+# which is a different job from provisioning it.
+DOCTOR=0; HELP=0
+if [[ "${1:-}" == doctor ]]; then DOCTOR=1; shift; fi
+
 while (( $# )); do
   case "$1" in
-    --check)      CHECK_ONLY=1; shift ;;
+    --dry-run)    CHECK_ONLY=1; shift ;;
+    --check)      CHECK_ONLY=1; shift ;;   # old name for --dry-run; still works
     --env)        ENV_NAME="${2:?--env needs a name}"; ENV_EXPLICIT=1; shift 2 ;;
     --env=*)      ENV_NAME="${1#*=}"; ENV_EXPLICIT=1; shift ;;
     --python)     PYTHON_VERSION="${2:?--python needs a version}"; shift 2 ;;
@@ -197,7 +203,7 @@ while (( $# )); do
     --reinstall)  FORCE=1; shift ;;
     --only)       ONLY="${2:?--only needs a comma-separated step list}"; shift 2 ;;
     --only=*)     ONLY="${1#*=}"; shift ;;
-    -h|--help)    sed -n '2,34p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help)    HELP=1; shift ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
 done
@@ -339,6 +345,170 @@ list_delete() {
       "${f/#$HOME/\~}" "(superseded by README.md)"
   done
 }
+
+# ------------------------------------------------------------- help / doctor --
+
+# --help is deliberately verbose and reports LIVE state: what is installed, what
+# has an update waiting, and what is missing. You should be able to decide
+# whether to run anything at all without running anything.
+if (( HELP )); then
+  sed -n '2,34p' "$0" | sed 's/^# \?//'
+  printf '\033[1mSTATE OF THIS ACCOUNT\033[0m  (%s)\n\n' "$(id -un)"
+  printf '  mamba env:     %s\n' \
+    "$([[ -d "$ENVDIR" ]] && printf '%s (python %s)' "$ENV_NAME" \
+       "$("$ENVDIR/bin/python" -V 2>/dev/null | awk '{print $2}')" || printf 'not created')"
+  printf '  components:\n'
+  _row() { printf '    %-22s %s\n' "$1" "$2"; }
+  _row miniforge3 "$([[ -d "$HOME/miniforge3" ]] && echo present || echo MISSING)"
+  _row node       "$(have_node   && "$ENVDIR/bin/node" -v 2>/dev/null || echo 'not installed')"
+  _row "ML stack" "$(have_ml     && echo present || echo 'not installed')"
+  _row "Claude Code" "$(have_claude && echo present || echo 'not installed')"
+  _row "Codex CLI"   "$(have_codex  && echo present || echo 'not installed')"
+  _row "doom emacs"  "$(have_doom   && echo present || echo 'not installed')"
+  _row "rootless docker" "$(have_rootless_docker && echo present || echo 'not set up')"
+  _row "ssh key"    "$([[ -f "$HOME/.ssh/id_ed25519" ]] && echo present || echo 'not generated')"
+
+  printf '\n  \033[1mdrifted from template\033[0m (a run would offer to restore these):\n'
+  _drift=0
+  if bashrc_differs; then printf '    ~/.bashrc\n'; _drift=1; fi
+  if dirs_differ;    then printf '    %s\n' "${DIRS_DRIFT[@]/#$HOME/\~}"; _drift=1; fi
+  if dotfiles_differ; then printf '    %s\n' "${DOTFILES_DRIFT[@]/#$HOME/\~}"; _drift=1; fi
+  (( _drift )) || printf '    nothing -- every managed file matches its template\n'
+
+  printf '\n  \033[1msteps\033[0m: %s\n' "${VALID_STEPS[*]}"
+  printf '\n  \033[1mdoctor\033[0m checks this account and offers to fix what it finds:\n'
+  printf '      ./provision-ubuntu-account.sh doctor\n\n'
+  exit 0
+fi
+
+# Reports on the account, then offers each fix. Read-only until you say yes.
+DOC_OK=0; DOC_WARN=0; DOC_FAIL=0
+DOC_FIX_DESC=(); DOC_FIX_CMD=()
+doc_ok()   { printf '  \033[1;32mOK\033[0m    %s\n' "$*"; DOC_OK=$((DOC_OK+1)); }
+doc_warn() { printf '  \033[1;33mWARN\033[0m  %s\n' "$*"; DOC_WARN=$((DOC_WARN+1)); }
+doc_fail() { printf '  \033[1;31mFAIL\033[0m  %s\n' "$*"; DOC_FAIL=$((DOC_FAIL+1)); }
+doc_note() { printf '        \033[2m%s\033[0m\n' "$*"; }
+doc_fix()  { DOC_FIX_DESC+=("$1"); DOC_FIX_CMD+=("$2"); }
+
+if (( DOCTOR )); then
+  printf '\n'
+  log "doctor: account $(id -un) on $(hostname)"
+  printf '\n'
+
+  # --- the env everything else lives in
+  if [[ -d "$HOME/miniforge3" ]]; then doc_ok "miniforge3 installed"
+  else doc_fail "miniforge3 is missing -- nothing in the env can work"
+       doc_fix "install miniforge3 and the env" "$SCRIPT_DIR/provision-ubuntu-account.sh --only mamba"; fi
+  if [[ -d "$ENVDIR" ]]; then
+    doc_ok "env '$ENV_NAME' exists (python $("$ENVDIR/bin/python" -V 2>/dev/null | awk '{print $2}'))"
+  else
+    doc_fail "env '$ENV_NAME' does not exist"
+    doc_fix "create the env" "$SCRIPT_DIR/provision-ubuntu-account.sh --only mamba"
+  fi
+  # ~/.bashrc activating an env that is not there leaves every new shell broken.
+  if [[ -f "$HOME/.bashrc" ]]; then
+    _act="$(sed -n 's/^mamba activate \([A-Za-z0-9._-]\{1,\}\).*/\1/p' "$HOME/.bashrc" 2>/dev/null | tail -1)"
+    if [[ -n "$_act" && ! -d "$HOME/miniforge3/envs/$_act" ]]; then
+      doc_fail "~/.bashrc activates env '$_act', which does not exist"
+      doc_note "every new shell will fail to activate it"
+      doc_fix "point ~/.bashrc at an env that exists" "$SCRIPT_DIR/provision-ubuntu-account.sh --only bashrc"
+    elif [[ -n "$_act" ]]; then
+      doc_ok "~/.bashrc activates env '$_act'"
+    fi
+  fi
+
+  # --- login shell chain: without it a login shell never reads ~/.bashrc, so
+  # --- ssh sessions silently get a different environment from local ones.
+  _first=""
+  for _f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+    [[ -f "$_f" ]] && { _first="$_f"; break; }
+  done
+  if [[ -z "$_first" ]]; then
+    doc_fail "no ~/.bash_profile, ~/.bash_login or ~/.profile -- login shells never read ~/.bashrc"
+    doc_fix "create a minimal ~/.profile" "$SCRIPT_DIR/provision-ubuntu-account.sh --only loginshell"
+  elif grep -q 'bashrc' "$_first" 2>/dev/null; then
+    doc_ok "$(basename "$_first") sources ~/.bashrc"
+  else
+    doc_fail "$_first does not source ~/.bashrc -- login shells get a different environment"
+    doc_fix "fix the login shell chain" "$SCRIPT_DIR/provision-ubuntu-account.sh --only loginshell"
+  fi
+
+  # --- drift. Only real differences, and never auto-fixed without listing them.
+  if bashrc_differs; then
+    doc_warn "~/.bashrc differs from the template"
+    doc_fix "review and replace ~/.bashrc (backup kept)" "$SCRIPT_DIR/provision-ubuntu-account.sh --only bashrc"
+  else
+    doc_ok "~/.bashrc matches the template"
+  fi
+  if dirs_differ || dotfiles_differ; then
+    doc_warn "$(( ${#DIRS_DRIFT[@]} + ${#DIRS_STALE[@]} + ${#DOTFILES_DRIFT[@]} )) managed file(s) differ from their templates"
+    for _f in "${DIRS_DRIFT[@]}" "${DOTFILES_DRIFT[@]}"; do doc_note "${_f/#$HOME/\~}"; done
+    for _f in "${DIRS_STALE[@]}"; do doc_note "${_f/#$HOME/\~}  (stale, superseded by README.md)"; done
+    doc_fix "review and restore them (backups kept)" "$SCRIPT_DIR/provision-ubuntu-account.sh --only dirs,dotfiles"
+  else
+    doc_ok "managed dotfiles match their templates"
+  fi
+
+  [[ -f "$HOME/.ssh/id_ed25519" ]] \
+    && doc_ok "ssh key present" \
+    || { doc_warn "no ssh key -- git pushes over ssh will fail"
+         doc_fix "generate one" "$SCRIPT_DIR/provision-ubuntu-account.sh --only ssh"; }
+
+  # --- rootless docker: several separately-breakable pieces, each invisible
+  # --- until a container fails to start.
+  if have_rootless_docker; then
+    doc_ok "rootless docker daemon configured"
+    if [[ -S "/run/user/$(id -u)/docker.sock" ]]; then doc_ok "its socket is live"
+    else doc_fail "the rootless socket is not there -- the daemon is not running"
+         doc_fix "start it" "systemctl --user start docker"; fi
+    [[ -f "$HOME/.config/docker/daemon.json" ]] \
+      && doc_ok "own daemon.json (log rotation, shm, memlock)" \
+      || { doc_fail "no ~/.config/docker/daemon.json"
+           doc_note "a rootless daemon reads NOTHING from /etc/docker: no log rotation"
+           doc_note "(fills \$HOME), 64M shm, default memlock"
+           doc_fix "install it" "$SCRIPT_DIR/provision-ubuntu-account.sh --docker-rootless --only dockerrootless"; }
+    if [[ -f "$HOME/.config/nvidia-container-runtime/config.toml" ]] \
+       && grep -Eq '^[[:space:]]*no-cgroups[[:space:]]*=[[:space:]]*true' "$HOME/.config/nvidia-container-runtime/config.toml"; then
+      doc_ok "nvidia no-cgroups set -- GPU containers can start"
+    elif command -v nvidia-ctk >/dev/null; then
+      doc_fail "no-cgroups is NOT set -- GPU containers will not start under rootless"
+      doc_fix "write the account's nvidia config" "$SCRIPT_DIR/provision-ubuntu-account.sh --docker-rootless --only dockerrootless"
+    fi
+    if [[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" == yes ]]; then
+      doc_ok "linger enabled -- the daemon survives logout"
+    else
+      doc_fail "NO linger -- the daemon and every container die at your last logout"
+      doc_note "this one needs root, so it cannot be fixed from here"
+      doc_fix "" "sudo loginctl enable-linger $(id -un)"
+    fi
+    if [[ " $(id -nG) " == *" docker "* ]]; then
+      doc_fail "this account is in the docker group, which is ROOT-EQUIVALENT"
+      doc_note "rootless buys nothing while the rootful socket stays reachable"
+      doc_fix "" "sudo gpasswd -d $(id -un) docker"
+    fi
+  fi
+
+  printf '\n'
+  log "$DOC_OK ok, $DOC_WARN warning(s), $DOC_FAIL failure(s)"
+  if (( ${#DOC_FIX_CMD[@]} )); then
+    printf '\n'
+    for _i in "${!DOC_FIX_CMD[@]}"; do
+      if [[ -z "${DOC_FIX_DESC[$_i]}" ]]; then
+        warn "not fixable from here:  ${DOC_FIX_CMD[$_i]}"
+        continue
+      fi
+      printf '\n  %s\n      \033[2m%s\033[0m\n' "${DOC_FIX_DESC[$_i]}" "${DOC_FIX_CMD[$_i]}"
+      if (( CHECK_ONLY )); then
+        printf '    \033[2m[dry run -- would offer this fix]\033[0m\n'
+      elif ask_yn "  run it?" n; then
+        eval "${DOC_FIX_CMD[$_i]}" || warn "that fix failed; the rest of the report still stands"
+      fi
+    done
+  fi
+  printf '\n'
+  (( DOC_FAIL )) && exit 1
+  exit 0
+fi
 
 # Default y: replacing a drifted file is what the script is for, so an
 # unattended run still does it. The question is an opt-OUT, not an opt-in.
