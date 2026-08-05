@@ -337,7 +337,7 @@ list_delete() {
 # has an update waiting, and what is missing. You should be able to decide
 # whether to run anything at all without running anything.
 if (( HELP )); then
-  sed -n '2,34p' "$0" | sed 's/^# \?//'
+  sed -n '2,27p' "$0" | sed 's/^# \?//'
   printf '\033[1mSTATE OF THIS ACCOUNT\033[0m  (%s)\n\n' "$(id -un)"
   printf '  mamba env:     %s\n' \
     "$([[ -d "$ENVDIR" ]] && printf '%s (python %s)' "$ENV_NAME" \
@@ -398,12 +398,14 @@ if (( HELP )); then
   printf '\n  Templates it installs live in templates/ -- edit those to change the\n'
   printf '  content of ~/.bashrc, the dotfiles, or ~/bin scripts.\n'
 
-  printf '\n\033[1mTHE ONLY THREE COMMANDS\033[0m\n\n'
-  printf '    ./provision-ubuntu-account.sh             ask, then do it\n'
-  printf '    ./provision-ubuntu-account.sh --dry-run   ask, then print what it would do\n'
-  printf '    ./provision-ubuntu-account.sh doctor      check this account, offer fixes\n\n'
-  printf '  Nothing is deleted without naming the file first. Files that are replaced\n'
-  printf '  are backed up to NAME.bak-<timestamp>. Your ssh key is never regenerated.\n\n'
+  printf '\n\033[1mWHAT IT WILL NOT DO\033[0m\n\n'
+  printf '  replace or delete a file without naming it first, and showing the backup\n'
+  printf '  regenerate your ssh key -- it is registered with GitHub and other hosts\n'
+  printf '  delete a mamba env -- a new name creates a second one, and says so\n'
+  printf '  remove a directory without printing its size and contents, and\n'
+  printf '    requiring you to type DELETE\n'
+  printf '  escalate to sudo, once provision-ubuntu-server.sh has run\n'
+  printf '  carry credentials between machines -- dotfiles are UI settings only\n\n'
   exit 0
 fi
 
