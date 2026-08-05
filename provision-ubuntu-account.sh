@@ -12,6 +12,8 @@
 #   ./provision-ubuntu-account.sh --claude --codex   # include the optional AI CLIs
 #   ./provision-ubuntu-account.sh --only dirs,git    # run just these steps
 #   ./provision-ubuntu-account.sh --reinstall        # refresh what is already installed
+#   ./provision-ubuntu-account.sh --docker-rootless  # this account's own docker,
+#                                                    # without the docker group
 #
 # Idempotent: safe to re-run. Existing files are backed up, never clobbered.
 #
@@ -180,7 +182,7 @@ while (( $# )); do
     --reinstall)  FORCE=1; shift ;;
     --only)       ONLY="${2:?--only needs a comma-separated step list}"; shift 2 ;;
     --only=*)     ONLY="${1#*=}"; shift ;;
-    -h|--help)    sed -n '2,18p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help)    sed -n '2,19p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
 done
@@ -323,7 +325,12 @@ FORCE_ROOTLESS=$FORCE
 if (( ! DO_ROOTLESS )); then
   if have_rootless_docker; then
     if ask_yn "rootless Docker is set up -- refresh its config?" n; then DO_ROOTLESS=1; FORCE_ROOTLESS=1; fi
-  elif command -v dockerd-rootless-setuptool.sh >/dev/null && ask_yn "set up rootless Docker for this account (containers without the root-equivalent docker group)?" n; then
+  # Gated on the docker CLI, not on the setup tool: when docker is installed but
+  # docker-ce-rootless-extras is not, the step below names the package an admin
+  # has to add. Gating on the tool itself would make that case ask nothing and
+  # say nothing, which reads as "this box cannot do it".
+  elif command -v docker >/dev/null \
+       && ask_yn "set up rootless Docker for this account (containers without the root-equivalent docker group)?" n; then
     DO_ROOTLESS=1
   fi
 fi
@@ -715,7 +722,126 @@ if want emacs; then
   fi
 fi
 
-# -------------------------------------------------------- 12. optional CLIs
+# ----------------------------------------------------- 12. rootless docker
+
+# Docker for an ordinary account, WITHOUT the docker group. That group is
+# root-equivalent: the socket is root:docker, so anyone who can reach it runs
+#     docker run -v /:/host -it ubuntu chroot /host
+# and reads /etc/shadow, every ~/.ssh key and every stored credential on the
+# box. Rootless gives this account its own daemon in its own user namespace
+# instead -- containers run AS the account, so bind-mounting / shows only what
+# the account could already see.
+#
+# Needs no root, like the rest of this script. The three root-only pieces (the
+# uidmap and docker-ce-rootless-extras packages, and enable-linger) belong to
+# provision-ubuntu-server.sh; when one is missing this step prints the exact
+# command an admin must run instead of failing part-way through.
+if want dockerrootless && (( DO_ROOTLESS )); then
+  _rootless_restart=0
+
+  _rootless_missing=()
+  for _p in "${DOCKER_ROOTLESS_PKGS[@]}"; do
+    [[ "$(dpkg-query -W -f='${Status}' "$_p" 2>/dev/null)" == "install ok installed" ]] \
+      || _rootless_missing+=("$_p")
+  done
+
+  # adduser writes a subuid/subgid range; an account created with plain useradd
+  # can have none, and rootless then has no uids to map into the namespace.
+  _rootless_subid=1
+  for _f in /etc/subuid /etc/subgid; do
+    grep -q "^$(id -un):" "$_f" 2>/dev/null || _rootless_subid=0
+  done
+
+  # No pipeline here on purpose: under `set -o pipefail`, `id -nG | grep -q`
+  # can report failure when grep exits early and the writer takes SIGPIPE, and
+  # silently missing THIS warning is the one outcome worth avoiding.
+  if [[ " $(id -nG) " == *" docker "* ]]; then
+    warn "$(id -un) is in the 'docker' group, which is ROOT-EQUIVALENT."
+    warn "  Rootless is pointless while that holds -- the root-equivalent socket"
+    warn "  stays reachable -- and the setup tool refuses to run beside a"
+    warn "  writable /var/run/docker.sock. An admin runs:"
+    warn "      sudo gpasswd -d $(id -un) docker"
+    warn "  then this account logs out and back in (groups are fixed at login)."
+  fi
+
+  if (( ${#_rootless_missing[@]} )); then
+    warn "rootless docker needs packages this account cannot install: ${_rootless_missing[*]}"
+    warn "  an admin runs:  sudo apt install -y ${_rootless_missing[*]}"
+    warn "  (provision-ubuntu-server.sh installs both, as part of its packages"
+    warn "   and docker steps -- this box has not had them run)"
+  elif (( ! _rootless_subid )); then
+    warn "no /etc/subuid or /etc/subgid range for $(id -un) -- rootless has no uids to map"
+    warn "  an admin runs:"
+    warn "      sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $(id -un)"
+  else
+    # 1. The daemon. Re-running is safe: an existing unit file and CLI context
+    #    are reported and left in place, so a refresh only rewrites the config
+    #    files below.
+    if have_rootless_docker && (( ! FORCE_ROOTLESS )); then
+      skip "rootless docker daemon already set up"
+    else
+      log "installing the rootless docker daemon for $(id -un)"
+      # This also creates and SELECTS a "rootless" CLI context, so a plain
+      # `docker` command reaches this daemon with no DOCKER_HOST needed.
+      # Never fatal: everything above has already succeeded, and the summary
+      # below still has an ssh key to print.
+      if ! run dockerd-rootless-setuptool.sh install; then
+        warn "dockerd-rootless-setuptool.sh failed. Run it directly to see why:"
+        warn "      dockerd-rootless-setuptool.sh install"
+      fi
+    fi
+
+    # 2. The account's own daemon.json. A rootless daemon reads NOTHING from
+    #    /etc/docker, so without this it gets no log rotation -- a long-running
+    #    server then fills $HOME -- plus 64M of shm and the default memlock.
+    _dj="$HOME/.config/docker/daemon.json"
+    if [[ -f "$_dj" ]] && cmp -s "$TEMPLATES/docker-daemon.json" "$_dj"; then
+      skip "rootless daemon.json already current"
+    else
+      backup "$_dj"
+      log "installing $_dj"
+      run mkdir -p "$(dirname "$_dj")"
+      run cp "$TEMPLATES/docker-daemon.json" "$_dj"
+      _rootless_restart=1
+    fi
+
+    # 3. The account's nvidia-container-runtime config. no-cgroups is mandatory
+    #    under rootless: the daemon cannot manage cgroups, nvidia-container-cli
+    #    fails without it, and GPU containers simply do not start. Deliberately
+    #    the ACCOUNT's copy -- setting it in /etc would also disable cgroup
+    #    limits for every rootful container on the box.
+    _nvsrc=/etc/nvidia-container-runtime/config.toml
+    _nvdst="$HOME/.config/nvidia-container-runtime/config.toml"
+    if ! command -v nvidia-ctk >/dev/null || [[ ! -f "$_nvsrc" ]]; then
+      skip "no nvidia container toolkit on this host; no GPU config to write"
+    elif [[ -f "$_nvdst" ]] \
+         && grep -Eq '^[[:space:]]*no-cgroups[[:space:]]*=[[:space:]]*true' "$_nvdst" \
+         && (( ! FORCE_ROOTLESS )); then
+      skip "nvidia no-cgroups config already in place"
+    else
+      log "writing $_nvdst with no-cgroups"
+      run mkdir -p "$(dirname "$_nvdst")"
+      run cp "$_nvsrc" "$_nvdst"
+      # --config-file is a flag OF `config`, not a global one: putting it before
+      # the subcommand fails. Naming only the key sets a boolean to true.
+      run nvidia-ctk config --config-file "$_nvdst" \
+          --set nvidia-container-cli.no-cgroups --in-place
+      _rootless_restart=1
+    fi
+
+    # 4. Pick the two files up -- only when one actually changed, and only if
+    #    there is a daemon to restart (step 1 may have just reported why not).
+    if (( _rootless_restart )) && systemctl --user is-enabled docker >/dev/null 2>&1; then
+      log "restarting the rootless docker daemon to pick up the new config"
+      run systemctl --user restart docker
+    fi
+
+    # Checked against the live linger state in the summary below.
+    NEED_LINGER=1
+  fi
+fi
+
+# -------------------------------------------------------- 13. optional CLIs
 
 if want claude && (( DO_CLAUDE )); then
   if { command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; } && (( ! FORCE_CLAUDE )); then

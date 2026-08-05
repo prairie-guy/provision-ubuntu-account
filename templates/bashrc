@@ -200,6 +200,20 @@ fi
 command -v zoxide >/dev/null && eval "$(zoxide init bash)"
 
 
+### Rootless Docker -----------------------
+# Set only when this account actually has a rootless daemon, so the line is
+# inert on accounts that do not (and on accounts that use the system daemon).
+#
+# The setup tool already creates a "rootless" CLI context, which is enough for
+# the `docker` command itself. This is for everything that reads the
+# environment instead of the CLI context -- the python docker SDK, testcontainers,
+# anything driving docker from a script -- which would otherwise fall back to
+# /var/run/docker.sock and fail with "permission denied".
+_docker_sock="${XDG_RUNTIME_DIR:-/run/user/$UID}/docker.sock"
+[ -S "$_docker_sock" ] && export DOCKER_HOST="unix://$_docker_sock"
+unset _docker_sock
+
+
 ### CUDA / GPU -----------------------
 # This is a shared AI box: several accounts use the same GPUs. Everything in
 # this section is PER-USER and safe to set here. Anything needing root (power

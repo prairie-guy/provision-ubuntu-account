@@ -119,7 +119,8 @@ Idempotent: re-running is safe. Existing files are backed up
 | `mamba` | miniforge3, then an env with your chosen name and python version |
 | `node` | `nodejs` (node + npm) into that env |
 | `emacs` | clones the doom config and delegates to its own `setup.sh` |
-| optional | `--ml`, `--claude`, `--codex` |
+| `dockerrootless` | a docker daemon this account owns, without the root-equivalent `docker` group (see below) |
+| optional | `--ml`, `--claude`, `--codex`, `--docker-rootless` |
 
 Run a subset with `--only dirs,git`.
 
@@ -132,6 +133,7 @@ Run a subset with `--only dirs,git`.
 | `--git-name`, `--git-email` | prairie-guy / `…@users.noreply.github.com` | git identity |
 | `--mamba-pkgs "a b c"` | see below | replace the default package list |
 | `--ml`, `--claude`, `--codex` | prompted, default no | skip the question by passing the flag |
+| `--docker-rootless` | prompted, default no | set up this account's own rootless docker daemon |
 | `--no-apt` | off | skip the system-package step even if something is missing |
 | `--only a,b` | all | run just these steps |
 | `--reinstall` | asked per component | answer yes to every already-present component at once |
@@ -304,6 +306,70 @@ printed key at <https://github.com/settings/keys>:
 ```
 git -C ~/.config/doom remote set-url origin git@github.com:prairie-guy/doom-emacs_dot_file.git
 ```
+
+## Docker without root (`dockerrootless`)
+
+Ordinary accounts have **no** docker access by default: `/var/run/docker.sock`
+is `root:docker`, so anything else gets "permission denied". There are exactly
+two ways to change that, and only one of them is safe for an account an agent
+drives:
+
+| | grants | suitable for |
+|---|---|---|
+| `sudo usermod -aG docker NAME` | **root-equivalent** | a human admin |
+| this step — a rootless daemon | containers only, as that account | an agent, or any untrusted worker |
+
+The group is root-equivalent because membership lets you run
+
+```bash
+docker run -v /:/host -it ubuntu chroot /host
+```
+
+which is a root shell: it reads `/etc/shadow`, every `~/.ssh` key and every
+stored credential on the box. No password, no exploit — it is what the socket
+does. An account in that group is not a restricted worker; it is root that
+happens not to have `sudo`.
+
+This step instead gives the account **its own daemon in its own user
+namespace**. Containers run as the account, so bind-mounting `/` shows only
+what the account could already see. It is per-account and never automatic:
+provisioning one account grants nothing to the next.
+
+What it writes, all under `$HOME`:
+
+* the rootless daemon itself, via `dockerd-rootless-setuptool.sh`, which also
+  creates and selects a `rootless` CLI context — so a plain `docker` command
+  reaches this daemon with no `DOCKER_HOST` needed
+* `~/.config/docker/daemon.json`, because **a rootless daemon reads nothing
+  from `/etc/docker`**. Without it the account gets no log rotation (a
+  long-running server then fills `$HOME`), 64 MB of shm, and the default memlock
+* `~/.config/nvidia-container-runtime/config.toml` with `no-cgroups`, which is
+  what makes GPUs work at all — a rootless daemon cannot manage cgroups, and
+  `nvidia-container-cli` fails without it. Deliberately the *account's* copy:
+  setting it in `/etc` would also disable cgroup limits for rootful containers
+
+Three things need root and therefore belong to `provision-ubuntu-server.sh`,
+not here. The step checks each and prints the exact command when one is missing:
+
+```bash
+sudo apt install -y uidmap docker-ce-rootless-extras   # in SYSTEM_PACKAGES / the docker step
+sudo gpasswd -d NAME docker      # revoke the root-equivalent group, if present
+sudo loginctl enable-linger NAME # or the daemon dies with the last session
+```
+
+Verify:
+
+```bash
+docker info -f '{{.SecurityOptions}}'      # includes name=rootless
+docker run --rm --device nvidia.com/gpu=all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi -L
+```
+
+Note `--device nvidia.com/gpu=all`, not `--gpus all`: Docker 29 routes `--gpus`
+through CDI as vendor-agnostic and fails with `AMD CDI spec not found` even when
+the NVIDIA spec is present.
+
+Images live in `~/.local/share/docker`, so they are not shared with other
+accounts and the disk usage shows up in the account's own home.
 
 ## Relationship to the other repos
 
