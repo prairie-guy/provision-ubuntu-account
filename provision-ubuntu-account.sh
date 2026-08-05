@@ -400,12 +400,14 @@ fi
 
 # Reports on the account, then offers each fix. Read-only until you say yes.
 DOC_OK=0; DOC_WARN=0; DOC_FAIL=0
-DOC_FIX_DESC=(); DOC_FIX_CMD=()
 doc_ok()   { printf '  \033[1;32mOK\033[0m    %s\n' "$*"; DOC_OK=$((DOC_OK+1)); }
 doc_warn() { printf '  \033[1;33mWARN\033[0m  %s\n' "$*"; DOC_WARN=$((DOC_WARN+1)); }
 doc_fail() { printf '  \033[1;31mFAIL\033[0m  %s\n' "$*"; DOC_FAIL=$((DOC_FAIL+1)); }
 doc_note() { printf '        \033[2m%s\033[0m\n' "$*"; }
-doc_fix()  { DOC_FIX_DESC+=("$1"); DOC_FIX_CMD+=("$2"); }
+# Print the fix under the finding it belongs to. doctor REPORTS; it does not
+# act. Offering each fix interactively meant three different problems showing
+# the same "re-run the script" command with vague labels -- noise, not help.
+doc_fix()  { local c="${2:-$1}"; [[ -n "$c" ]] && printf '        \033[2mfix: %s\033[0m\n' "$c"; return 0; }
 
 if (( DOCTOR )); then
   printf '\n'
@@ -415,12 +417,12 @@ if (( DOCTOR )); then
   # --- the env everything else lives in
   if [[ -d "$HOME/miniforge3" ]]; then doc_ok "miniforge3 installed"
   else doc_fail "miniforge3 is missing -- nothing in the env can work"
-       doc_fix "install miniforge3 and the env" "$SCRIPT_DIR/provision-ubuntu-account.sh"; fi
+       doc_fix "re-run; it installs miniforge3 and the env"; fi
   if [[ -d "$ENVDIR" ]]; then
     doc_ok "env '$ENV_NAME' exists (python $("$ENVDIR/bin/python" -V 2>/dev/null | awk '{print $2}'))"
   else
     doc_fail "env '$ENV_NAME' does not exist"
-    doc_fix "create the env" "$SCRIPT_DIR/provision-ubuntu-account.sh"
+    doc_fix "re-run; it creates the env"
   fi
   # ~/.bashrc activating an env that is not there leaves every new shell broken.
   if [[ -f "$HOME/.bashrc" ]]; then
@@ -428,7 +430,7 @@ if (( DOCTOR )); then
     if [[ -n "$_act" && ! -d "$HOME/miniforge3/envs/$_act" ]]; then
       doc_fail "~/.bashrc activates env '$_act', which does not exist"
       doc_note "every new shell will fail to activate it"
-      doc_fix "point ~/.bashrc at an env that exists" "$SCRIPT_DIR/provision-ubuntu-account.sh"
+      doc_fix "re-run and answer yes to the ~/.bashrc question"
     elif [[ -n "$_act" ]]; then
       doc_ok "~/.bashrc activates env '$_act'"
     fi
@@ -442,18 +444,18 @@ if (( DOCTOR )); then
   done
   if [[ -z "$_first" ]]; then
     doc_fail "no ~/.bash_profile, ~/.bash_login or ~/.profile -- login shells never read ~/.bashrc"
-    doc_fix "create a minimal ~/.profile" "$SCRIPT_DIR/provision-ubuntu-account.sh"
+    doc_fix "re-run; it writes a minimal ~/.profile"
   elif grep -q 'bashrc' "$_first" 2>/dev/null; then
     doc_ok "$(basename "$_first") sources ~/.bashrc"
   else
     doc_fail "$_first does not source ~/.bashrc -- login shells get a different environment"
-    doc_fix "fix the login shell chain" "$SCRIPT_DIR/provision-ubuntu-account.sh"
+    doc_fix "re-run; it fixes the login shell chain"
   fi
 
   # --- drift. Only real differences, and never auto-fixed without listing them.
   if bashrc_differs; then
     doc_warn "~/.bashrc differs from the template"
-    doc_fix "review and replace ~/.bashrc (backup kept)" "$SCRIPT_DIR/provision-ubuntu-account.sh"
+    doc_fix "re-run and answer yes to the ~/.bashrc question (backup kept)"
   else
     doc_ok "~/.bashrc matches the template"
   fi
@@ -461,7 +463,7 @@ if (( DOCTOR )); then
     doc_warn "$(( ${#DIRS_DRIFT[@]} + ${#DIRS_STALE[@]} + ${#DOTFILES_DRIFT[@]} )) managed file(s) differ from their templates"
     for _f in "${DIRS_DRIFT[@]}" "${DOTFILES_DRIFT[@]}"; do doc_note "${_f/#$HOME/\~}"; done
     for _f in "${DIRS_STALE[@]}"; do doc_note "${_f/#$HOME/\~}  (stale, superseded by README.md)"; done
-    doc_fix "review and restore them (backups kept)" "$SCRIPT_DIR/provision-ubuntu-account.sh"
+    doc_fix "re-run; it names each file and asks (backups kept)"
   else
     doc_ok "managed dotfiles match their templates"
   fi
@@ -469,7 +471,7 @@ if (( DOCTOR )); then
   [[ -f "$HOME/.ssh/id_ed25519" ]] \
     && doc_ok "ssh key present" \
     || { doc_warn "no ssh key -- git pushes over ssh will fail"
-         doc_fix "generate one" "$SCRIPT_DIR/provision-ubuntu-account.sh"; }
+         doc_fix "re-run; it generates one"; }
 
   # --- rootless docker: several separately-breakable pieces, each invisible
   # --- until a container fails to start.
@@ -477,19 +479,19 @@ if (( DOCTOR )); then
     doc_ok "rootless docker daemon configured"
     if [[ -S "/run/user/$(id -u)/docker.sock" ]]; then doc_ok "its socket is live"
     else doc_fail "the rootless socket is not there -- the daemon is not running"
-         doc_fix "start it" "systemctl --user start docker"; fi
+         doc_fix "systemctl --user start docker"; fi
     [[ -f "$HOME/.config/docker/daemon.json" ]] \
       && doc_ok "own daemon.json (log rotation, shm, memlock)" \
       || { doc_fail "no ~/.config/docker/daemon.json"
            doc_note "a rootless daemon reads NOTHING from /etc/docker: no log rotation"
            doc_note "(fills \$HOME), 64M shm, default memlock"
-           doc_fix "install it" "$SCRIPT_DIR/provision-ubuntu-account.sh"; }
+           doc_fix "re-run and answer yes to the rootless docker question"; }
     if [[ -f "$HOME/.config/nvidia-container-runtime/config.toml" ]] \
        && grep -Eq '^[[:space:]]*no-cgroups[[:space:]]*=[[:space:]]*true' "$HOME/.config/nvidia-container-runtime/config.toml"; then
       doc_ok "nvidia no-cgroups set -- GPU containers can start"
     elif command -v nvidia-ctk >/dev/null; then
       doc_fail "no-cgroups is NOT set -- GPU containers will not start under rootless"
-      doc_fix "write the account's nvidia config" "$SCRIPT_DIR/provision-ubuntu-account.sh"
+      doc_fix "re-run and answer yes to the rootless docker question"
     fi
     if [[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" == yes ]]; then
       doc_ok "linger enabled -- the daemon survives logout"
@@ -507,21 +509,6 @@ if (( DOCTOR )); then
 
   printf '\n'
   log "$DOC_OK ok, $DOC_WARN warning(s), $DOC_FAIL failure(s)"
-  if (( ${#DOC_FIX_CMD[@]} )); then
-    printf '\n'
-    for _i in "${!DOC_FIX_CMD[@]}"; do
-      if [[ -z "${DOC_FIX_DESC[$_i]}" ]]; then
-        warn "not fixable from here:  ${DOC_FIX_CMD[$_i]}"
-        continue
-      fi
-      printf '\n  %s\n      \033[2m%s\033[0m\n' "${DOC_FIX_DESC[$_i]}" "${DOC_FIX_CMD[$_i]}"
-      if (( CHECK_ONLY )); then
-        printf '    \033[2m[dry run -- would offer this fix]\033[0m\n'
-      elif ask_yn "  run it?" n; then
-        eval "${DOC_FIX_CMD[$_i]}" || warn "that fix failed; the rest of the report still stands"
-      fi
-    done
-  fi
   printf '\n'
   (( DOC_FAIL )) && exit 1
   exit 0
