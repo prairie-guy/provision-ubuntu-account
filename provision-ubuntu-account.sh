@@ -226,7 +226,10 @@ fi
 
 # Ask for the env name when it was not specified and someone is there to answer.
 # `read` returns non-zero at EOF, which would abort under `set -e`.
-if (( ! ENV_EXPLICIT )) && [[ -t 0 ]]; then
+# NOT when --help or doctor was asked for. Those only report; prompting for an
+# env name before printing help is nonsense, and it is invisible unless you test
+# with a real terminal -- with stdin redirected the `-t 0` guard hides it.
+if (( ! ENV_EXPLICIT )) && (( ! HELP && ! DOCTOR )) && [[ -t 0 ]]; then
   read -r -p "mamba env name [$ENV_NAME]: " _reply || true
   [[ -n "${_reply:-}" ]] && ENV_NAME="$_reply"
 fi
