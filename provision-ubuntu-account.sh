@@ -282,34 +282,83 @@ cleanup() { rm -f "${RENDERED_BASHRC:-}"; [[ -n "${SUDO_KEEPALIVE:-}" ]] && kill
 trap cleanup EXIT
 sed "s/__ENV_NAME__/$ENV_NAME/g" "$TEMPLATES/bashrc" >"$RENDERED_BASHRC"
 bashrc_differs() { [[ -f "$HOME/.bashrc" ]] && ! cmp -s "$RENDERED_BASHRC" "$HOME/.bashrc"; }
+# These collect the exact paths that have drifted, not just whether any have, so
+# the question can NAME the files it is about to replace. Answering "yes" to
+# "the directory READMEs differ" means trusting the script about which files it
+# means; answering it to a list of three named paths does not.
+DIRS_DRIFT=(); DIRS_STALE=()
 dirs_differ() {
-  local d f
+  local d f dest
+  DIRS_DRIFT=(); DIRS_STALE=()
   for d in scratch stuff junk; do
-    [[ -f "$HOME/$d/README.md" ]] && ! cmp -s "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md" && return 0
+    if [[ -f "$HOME/$d/README.md" ]] && ! cmp -s "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md"; then
+      DIRS_DRIFT+=("$HOME/$d/README.md")
+    fi
+    # Superseded by README.md. This is the only deletion in the step, so it gets
+    # listed with the rest rather than happening quietly mid-run.
+    [[ -f "$HOME/$d/README.org" ]] && DIRS_STALE+=("$HOME/$d/README.org")
   done
   for f in "$TEMPLATES"/bin/*; do
-    [[ -f "$f" && -f "$HOME/bin/$(basename "$f")" ]] \
-      && ! cmp -s "$f" "$HOME/bin/$(basename "$f")" && return 0
+    [[ -f "$f" ]] || continue
+    dest="$HOME/bin/$(basename "$f")"
+    if [[ -f "$dest" ]] && ! cmp -s "$f" "$dest"; then
+      DIRS_DRIFT+=("$dest")
+    fi
   done
-  return 1
+  (( ${#DIRS_DRIFT[@]} + ${#DIRS_STALE[@]} ))
 }
+DOTFILES_DRIFT=()
 dotfiles_differ() {
   local pair src dst
+  DOTFILES_DRIFT=()
   for pair in "git-ignore:$HOME/.config/git/ignore" \
               "zellij-config.kdl:$HOME/.config/zellij/config.kdl" \
               "claude-settings.json:$HOME/.claude/settings.json"; do
     src="${pair%%:*}"; dst="${pair#*:}"
-    [[ -f "$dst" ]] && ! cmp -s "$TEMPLATES/$src" "$dst" && return 0
+    if [[ -f "$dst" ]] && ! cmp -s "$TEMPLATES/$src" "$dst"; then
+      DOTFILES_DRIFT+=("$dst")
+    fi
   done
-  return 1
+  (( ${#DOTFILES_DRIFT[@]} ))
+}
+
+# Print exactly what a question is about to do to existing files, and where the
+# backup will go. Only drifted files appear: a file that already matches its
+# template is never mentioned, because nothing is going to happen to it.
+list_replace() {
+  local f
+  for f in "$@"; do
+    printf '      \033[1mREPLACE\033[0m %-40s backup: %s\n' \
+      "${f/#$HOME/\~}" "$(basename "$f").bak-$STAMP"
+  done
+}
+list_delete() {
+  local f
+  for f in "$@"; do
+    printf '      \033[1;31mDELETE\033[0m  %-40s %s\n' \
+      "${f/#$HOME/\~}" "(superseded by README.md)"
+  done
 }
 
 # Default y: replacing a drifted file is what the script is for, so an
 # unattended run still does it. The question is an opt-OUT, not an opt-in.
 KEEP_BASHRC=0; KEEP_DIRS=0; KEEP_DOTFILES=0
-if bashrc_differs   && ! ask_yn "~/.bashrc differs from the template -- replace it (a backup is kept)?" y; then KEEP_BASHRC=1; fi
-if dirs_differ      && ! ask_yn "files in ~/bin or the directory READMEs differ -- replace them?"       y; then KEEP_DIRS=1; fi
-if dotfiles_differ  && ! ask_yn "gitignore / zellij / claude settings differ -- replace them?"          y; then KEEP_DOTFILES=1; fi
+if bashrc_differs; then
+  printf '\n'
+  list_replace "$HOME/.bashrc"
+  ask_yn "~/.bashrc differs from the template -- replace it?" y || KEEP_BASHRC=1
+fi
+if dirs_differ; then
+  printf '\n'
+  if (( ${#DIRS_DRIFT[@]} )); then list_replace "${DIRS_DRIFT[@]}"; fi
+  if (( ${#DIRS_STALE[@]} )); then list_delete  "${DIRS_STALE[@]}"; fi
+  ask_yn "apply the $(( ${#DIRS_DRIFT[@]} + ${#DIRS_STALE[@]} )) change(s) above?" y || KEEP_DIRS=1
+fi
+if dotfiles_differ; then
+  printf '\n'
+  list_replace "${DOTFILES_DRIFT[@]}"
+  ask_yn "apply the ${#DOTFILES_DRIFT[@]} change(s) above?" y || KEEP_DOTFILES=1
+fi
 
 # Always-installed components: only worth a question when already present.
 if (( ! FORCE_MAMBA )) && have_mamba_pkgs \
@@ -440,14 +489,22 @@ if want dirs; then
   # three, so whichever one you land in tells you the whole scheme. ~/bin is
   # self-explanatory and gets none.
   for d in scratch stuff junk; do
-    if [[ -f "$HOME/$d/README.md" ]] && { cmp -s "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md" || (( KEEP_DIRS )); }; then
+    if [[ -f "$HOME/$d/README.md" ]] && cmp -s "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md"; then
       skip "~/$d/README.md already current"
+    elif [[ -f "$HOME/$d/README.md" ]] && (( KEEP_DIRS )); then
+      # Say KEPT, not "already current". It differs -- you asked to keep it, and
+      # reporting it as identical would hide that your version is still there.
+      skip "keeping your ~/$d/README.md (differs from the template)"
     else
       backup "$HOME/$d/README.md"
       run cp "$TEMPLATES/dirs-README.md" "$HOME/$d/README.md"
     fi
-    # superseded by README.md
-    [[ -f "$HOME/$d/README.org" ]] && { log "removing stale ~/$d/README.org"; run rm -f "$HOME/$d/README.org"; }
+    # Superseded by README.md. Listed in the question above and skipped along
+    # with the rest when you decline -- "keep my files" has to mean this one too.
+    if [[ -f "$HOME/$d/README.org" ]] && (( ! KEEP_DIRS )); then
+      log "removing stale ~/$d/README.org"
+      run rm -f "$HOME/$d/README.org"
+    fi
   done
 
   # Helper scripts into ~/bin, which the bashrc puts on PATH.
@@ -455,8 +512,10 @@ if want dirs; then
     for f in "$TEMPLATES"/bin/*; do
       [[ -f "$f" ]] || continue
       dest="$HOME/bin/$(basename "$f")"
-      if [[ -f "$dest" ]] && { cmp -s "$f" "$dest" || (( KEEP_DIRS )); }; then
+      if [[ -f "$dest" ]] && cmp -s "$f" "$dest"; then
         skip "~/bin/$(basename "$f") already current"
+      elif [[ -f "$dest" ]] && (( KEEP_DIRS )); then
+        skip "keeping your ~/bin/$(basename "$f") (differs from the template)"
       else
         backup "$dest"
         log "installing $dest"
@@ -545,8 +604,12 @@ if want dotfiles; then
   # placing the file is enough -- no git config needed.
   install_dotfile() {
     local src="$1" dst="$2"
-    if [[ -f "$dst" ]] && { cmp -s "$TEMPLATES/$src" "$dst" || (( KEEP_DOTFILES )); }; then
+    if [[ -f "$dst" ]] && cmp -s "$TEMPLATES/$src" "$dst"; then
       skip "$(basename "$dst") already current"
+      return
+    fi
+    if [[ -f "$dst" ]] && (( KEEP_DOTFILES )); then
+      skip "keeping your ${dst/#$HOME/~} (differs from the template)"
       return
     fi
     backup "$dst"
