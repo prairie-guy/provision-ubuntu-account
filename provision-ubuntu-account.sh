@@ -6,14 +6,29 @@
 # sudo is the optional apt install of a few CLI tools; skip it with --no-apt
 # and a parent server-provisioning script can own that instead.
 #
-#   ./provision-ubuntu-account.sh                    # everything except the optional CLIs
-#   ./provision-ubuntu-account.sh --check            # dry run, touch nothing
+# RUN IT WITH NO FLAGS. That is the intended way to use this:
+#
+#   ./provision-ubuntu-account.sh --check    # same questions, does nothing
+#   ./provision-ubuntu-account.sh            # <- this
+#
+# It asks about each component individually, phrased by what it actually found
+# ("install X?" when absent, "update X?" when present), and asks ALL of them
+# before doing any work. Then it runs to completion without stopping. Press
+# Enter through everything for the conservative answer. On an account that is
+# already provisioned and has not drifted, it asks nothing at all.
+#
+# The flags below are NOT the interface. They exist so a second account or an
+# unattended run can answer the questions up front:
+#
 #   ./provision-ubuntu-account.sh --env ml --python 3.12   # --env skips the prompt
 #   ./provision-ubuntu-account.sh --claude --codex   # include the optional AI CLIs
 #   ./provision-ubuntu-account.sh --only dirs,git    # run just these steps
 #   ./provision-ubuntu-account.sh --reinstall        # refresh what is already installed
 #   ./provision-ubuntu-account.sh --docker-rootless  # this account's own docker,
 #                                                    # without the docker group
+#
+# Package lists, python version and git identity are values rather than
+# decisions: they live in the CONFIGURATION block below, edited once.
 #
 # Idempotent: safe to re-run. Existing files are backed up, never clobbered.
 #
@@ -182,7 +197,7 @@ while (( $# )); do
     --reinstall)  FORCE=1; shift ;;
     --only)       ONLY="${2:?--only needs a comma-separated step list}"; shift 2 ;;
     --only=*)     ONLY="${1#*=}"; shift ;;
-    -h|--help)    sed -n '2,19p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help)    sed -n '2,34p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
 done

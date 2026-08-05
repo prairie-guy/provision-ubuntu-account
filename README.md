@@ -27,6 +27,40 @@ git remote set-url origin git@github.com:prairie-guy/provision-ubuntu-account.gi
 `git clone` creates missing parent directories, so this works on a bare account
 before `~/stuff` exists — the script creates it properly on its first run.
 
+## Run it with no flags
+
+**That is the intended way to use this, and it is what you want in almost every
+case.** With no arguments the script asks first and executes second:
+
+1. **Asks** about each component individually, phrased by what it actually
+   found — `install Claude Code?` when it is absent, `Claude Code is installed
+   -- reinstall it?` when it is not. Every question comes before any work.
+2. **Executes** to completion without stopping, so a run that downloads
+   miniforge and builds doom does not pause halfway to ask you something.
+
+Press Enter through everything and you get the conservative answer: missing
+things are installed, present things are left alone, drifted config files are
+restored from the template with a backup kept.
+
+On an account that is already provisioned and has not drifted, a re-run asks
+**nothing at all** and just reports what it found.
+
+**The flags are not the interface.** They exist so a second account, or an
+unattended run, can answer the questions up front. The only one worth reaching
+for routinely is `--check`, which asks the same questions and then prints what
+it would do instead of doing it.
+
+### Where the settings live
+
+| | holds | how you change it |
+|---|---|---|
+| **the questions** | *what should happen* — install the ML stack or not, refresh a dotfile or not | answer them at the prompt |
+| **the `CONFIGURATION` block** at the top of the script | *what values to use* — the package lists, python version, git identity, doom repo | edit those lines once |
+
+The mamba environment name is the one value you *are* asked for, because it
+differs per account and per box; everything else in that block is a property of
+how you like an account set up, not a per-run decision.
+
 `~/stuff` rather than `~/.config` because this is a standalone project with its
 own remote, not configuration read by any program. That is the rule the
 directory scheme in `templates/dirs-README.md` describes.
@@ -139,6 +173,10 @@ Run a subset with `--only dirs,git`.
 | `--reinstall` | asked per component | answer yes to every already-present component at once |
 | `--check` | off | dry run, change nothing |
 
+None of these are needed for a normal run — the questions cover every decision.
+They are for answering up front, so a second account or an unattended run does
+not need you at the keyboard.
+
 Defaults also read from the environment: `ENV_NAME`, `PYTHON_VERSION`,
 `GIT_NAME`, `GIT_EMAIL`.
 
@@ -190,6 +228,10 @@ The rules that make that true:
 | carry credentials between machines | `dotfiles` installs UI settings only; `.credentials.json` and machine-local permissions are deliberately excluded |
 
 ### Recipes
+
+**The plain interactive run handles most of these** — re-run with no flags and
+answer the question about the thing you want to change. These are the unattended
+equivalents, for when you already know the answer.
 
 | to change | do this | what a later plain re-run does |
 |---|---|---|
