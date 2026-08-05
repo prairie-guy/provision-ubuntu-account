@@ -493,11 +493,20 @@ if (( DOCTOR )); then
     else doc_fail "the rootless socket is not there -- the daemon is not running"
          doc_fix "systemctl --user start docker"; fi
     [[ -f "$HOME/.config/docker/daemon.json" ]] \
-      && doc_ok "own daemon.json (log rotation, shm, memlock)" \
+      && doc_ok "own daemon.json (log rotation, shm)" \
       || { doc_fail "no ~/.config/docker/daemon.json"
            doc_note "a rootless daemon reads NOTHING from /etc/docker: no log rotation"
            doc_note "(fills \$HOME), 64M shm, default memlock"
            doc_fix "re-run and answer yes to the rootless docker question"; }
+    # An unlimited memlock in a ROOTLESS daemon.json stops EVERY container from
+    # starting, and runc reports it as an rlimit number rather than a setting.
+    if [[ -f "$HOME/.config/docker/daemon.json" ]] \
+       && grep -q '"memlock"' "$HOME/.config/docker/daemon.json" 2>/dev/null; then
+      doc_fail "daemon.json asks for a memlock ulimit, which rootless cannot set"
+      doc_note "every container fails: error setting rlimit type 8: operation not permitted"
+      doc_note "a rootless daemon cannot raise a hard limit above the account's own"
+      doc_fix "re-run and answer yes to the rootless docker question"
+    fi
     if [[ -f "$HOME/.config/nvidia-container-runtime/config.toml" ]] \
        && grep -Eq '^[[:space:]]*no-cgroups[[:space:]]*=[[:space:]]*true' "$HOME/.config/nvidia-container-runtime/config.toml"; then
       doc_ok "nvidia no-cgroups set -- GPU containers can start"
@@ -1086,7 +1095,17 @@ if want dockerrootless && (( DO_ROOTLESS )); then
 
     # 2. The account's own daemon.json. A rootless daemon reads NOTHING from
     #    /etc/docker, so without this it gets no log rotation -- a long-running
-    #    server then fills $HOME -- plus 64M of shm and the default memlock.
+    #    server then fills $HOME -- and 64M of shm, which multi-GPU NCCL dies on.
+    #
+    #    It deliberately does NOT set default-ulimits memlock. The SYSTEM
+    #    daemon.json does, as -1/unlimited, and copying that here breaks every
+    #    container: a rootless daemon runs as this account and cannot raise a
+    #    hard limit above the account's own, so runc fails with
+    #        error setting rlimit type 8: operation not permitted
+    #    (type 8 is RLIMIT_MEMLOCK). Containers inherit the account's limit
+    #    instead -- 16402720 KB / ~15.6 GB by default here, which is ample.
+    #    Raising the ceiling needs root: provision-ubuntu-server.sh,
+    #    MEMLOCK_ACCOUNTS.
     _dj="$HOME/.config/docker/daemon.json"
     if [[ -f "$_dj" ]] && cmp -s "$TEMPLATES/docker-daemon.json" "$_dj"; then
       skip "rootless daemon.json already current"

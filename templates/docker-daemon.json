@@ -1,8 +1,5 @@
 {
   "log-driver": "json-file",
   "log-opts": { "max-size": "100m", "max-file": "5" },
-  "default-shm-size": "16G",
-  "default-ulimits": {
-    "memlock": { "Name": "memlock", "Hard": -1, "Soft": -1 }
-  }
+  "default-shm-size": "16G"
 }

@@ -486,7 +486,22 @@ What it writes, all under `$HOME`:
   reaches this daemon with no `DOCKER_HOST` needed
 * `~/.config/docker/daemon.json`, because **a rootless daemon reads nothing
   from `/etc/docker`**. Without it the account gets no log rotation (a
-  long-running server then fills `$HOME`), 64 MB of shm, and the default memlock
+  long-running server then fills `$HOME`) and 64 MB of shm, which multi-GPU
+  NCCL dies on.
+
+  It deliberately does **not** set a `memlock` ulimit, though the system
+  `daemon.json` does. A rootless daemon runs as the account and cannot raise a
+  hard limit above the account's own, so asking for unlimited makes *every*
+  container fail to start:
+
+  ```
+  error setting rlimit type 8: operation not permitted
+  ```
+
+  (type 8 is `RLIMIT_MEMLOCK`). Containers inherit the account's limit instead —
+  16402720 KB, about 15.6 GB, on a stock Ubuntu account, which is ample; TP=2
+  inference runs fine on it. Raising that ceiling needs root, via
+  `MEMLOCK_ACCOUNTS` in `provision-ubuntu-server.sh`
 * `~/.config/nvidia-container-runtime/config.toml` with `no-cgroups`, which is
   what makes GPUs work at all — a rootless daemon cannot manage cgroups, and
   `nvidia-container-cli` fails without it. Deliberately the *account's* copy:
