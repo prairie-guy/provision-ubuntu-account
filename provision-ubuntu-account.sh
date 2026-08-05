@@ -2,28 +2,23 @@
 #
 # provision-ubuntu-account.sh -- provision a USER account, not the server.
 #
-# Everything here is per-user and lands under $HOME. On a box already set up by
+# Everything lands under $HOME. On a box already set up by
 # provision-ubuntu-server.sh it needs no sudo at all.
-#
-# THERE ARE THREE COMMANDS. That is the whole interface:
 #
 #   ./provision-ubuntu-account.sh             ask, then do it
 #   ./provision-ubuntu-account.sh --dry-run   ask, then print what it would do
 #   ./provision-ubuntu-account.sh doctor      check this account, offer fixes
 #
-# It asks about each component individually, phrased by what it actually found
-# ("install X?" when absent, "update X?" when present), and asks ALL of them
-# before doing any work. Then it runs to completion without stopping. Press
-# Enter through everything for the conservative answer. On an account that is
-# already provisioned and has not drifted, it asks nothing at all.
+# That is the whole interface. It asks about every component BEFORE doing any
+# work -- "install X?" when absent, "update X?" when present -- then runs to
+# completion without stopping. Enter takes the conservative answer. On a
+# provisioned account that has not drifted, it asks nothing at all.
 #
-# There are no other options, deliberately. Anything consequential enough to
-# want a flag is consequential enough to be asked about, and anything that is a
-# VALUE rather than a decision -- the python version, the package lists, your
-# git identity -- lives in the CONFIGURATION block below, edited once.
+# Decisions are questions. Values live in the CONFIGURATION block below. There
+# are no flags: anything worth one is worth being asked about.
 #
-# Idempotent: safe to re-run. Nothing is deleted without naming the file first;
-# replaced files are backed up; your ssh key is never regenerated.
+# Idempotent -- re-running is safe. Nothing is deleted without naming the file
+# first; replaced files are backed up; your ssh key is never regenerated.
 #
 set -euo pipefail
 
@@ -340,33 +335,32 @@ list_delete() {
 # has an update waiting, and what is missing. You should be able to decide
 # whether to run anything at all without running anything.
 if (( HELP )); then
-  sed -n '2,27p' "$0" | sed 's/^# \?//'
+  sed -n '2,22p' "$0" | sed 's/^# \?//'
   printf '\033[1mSTATE OF THIS ACCOUNT\033[0m  (%s)\n\n' "$(id -un)"
   printf '  mamba env:     %s\n' \
     "$([[ -d "$ENVDIR" ]] && printf '%s (python %s)' "$ENV_NAME" \
        "$("$ENVDIR/bin/python" -V 2>/dev/null | awk '{print $2}')" || printf 'not created')"
-  printf '  components:\n'
-  _row() { printf '    %-22s %s\n' "$1" "$2"; }
-  _row miniforge3 "$([[ -d "$HOME/miniforge3" ]] && echo present || echo MISSING)"
-  _row node       "$(have_node   && "$ENVDIR/bin/node" -v 2>/dev/null || echo 'not installed')"
-  _row "ML stack" "$(have_ml     && echo present || echo 'not installed')"
-  _row "Claude Code" "$(have_claude && echo present || echo 'not installed')"
-  _row "Codex CLI"   "$(have_codex  && echo present || echo 'not installed')"
-  _row "doom emacs"  "$(have_doom   && echo present || echo 'not installed')"
-  _row "rootless docker" "$(have_rootless_docker && echo present || echo 'not set up')"
-  _row "ssh key"    "$([[ -f "$HOME/.ssh/id_ed25519" ]] && echo present || echo 'not generated')"
-
-  printf '\n  \033[1mdrifted from template\033[0m (a run would offer to restore these):\n'
+  # Two lines rather than one per component: the list matters, the layout does not.
+  _have=(); _miss=()
+  [[ -d "$HOME/miniforge3" ]] && _have+=(miniforge3)         || _miss+=(miniforge3)
+  have_node             && _have+=("node $("$ENVDIR/bin/node" -v 2>/dev/null)") || _miss+=(node)
+  have_ml               && _have+=("ML stack")               || _miss+=("ML stack")
+  have_claude           && _have+=(claude)                   || _miss+=(claude)
+  have_codex            && _have+=(codex)                    || _miss+=(codex)
+  have_doom             && _have+=(doom)                     || _miss+=(doom)
+  have_rootless_docker  && _have+=("rootless docker")        || _miss+=("rootless docker")
+  [[ -f "$HOME/.ssh/id_ed25519" ]] && _have+=("ssh key")     || _miss+=("ssh key")
+  _join() { local out; out="$(printf '%s, ' "$@")"; printf '%s' "${out%, }"; }
+  printf '  present:       %s\n' "$( (( ${#_have[@]} )) && _join "${_have[@]}" || printf none )"
+  printf '  not installed: %s\n' "$( (( ${#_miss[@]} )) && _join "${_miss[@]}" || printf none )"
+  printf '\n  \033[1mdrifted\033[0m (a run offers to restore these):\n'
   _drift=0
   if bashrc_differs; then printf '    ~/.bashrc\n'; _drift=1; fi
   if dirs_differ;    then printf '    %s\n' "${DIRS_DRIFT[@]/#$HOME/\~}"; _drift=1; fi
   if dotfiles_differ; then printf '    %s\n' "${DOTFILES_DRIFT[@]/#$HOME/\~}"; _drift=1; fi
   (( _drift )) || printf '    nothing -- every managed file matches its template\n'
 
-  printf '\n\033[1mWHAT A RUN WOULD ASK ABOUT\033[0m\n\n'
-  printf '  It walks these in order, asking one question each. A component that is\n'
-  printf '  absent is offered for install; one already present is offered for update;\n'
-  printf '  a managed file is only mentioned when it has actually drifted.\n\n'
+  printf '\n\033[1mWHAT A RUN WOULD ASK ABOUT\033[0m  (one question each, in order)\n\n'
   printf '    %-16s %s\n' \
     dirs        "~/bin ~/scratch ~/stuff ~/junk, and their README" \
     bashrc      "~/.bashrc from templates/bashrc" \
@@ -383,31 +377,23 @@ if (( HELP )); then
     claude      "Claude Code -- asked, default no" \
     codex       "OpenAI Codex CLI -- asked, default no"
 
-  printf '\n\033[1mWHAT YOU CAN CHANGE, AND WHERE\033[0m\n\n'
-  printf '  There are no options for these. Edit the CONFIGURATION block at the top\n'
-  printf '  of %s -- each entry has a comment saying why it is\n' "$(basename "$0")"
-  printf '  what it is. They are properties of how you like an account built, not\n'
-  printf '  per-run decisions, so they live in the file and not on the command line.\n\n'
+  printf '\n\033[1mWHAT YOU CAN CHANGE\033[0m  (CONFIGURATION block, top of %s)\n\n' "$(basename "$0")"
   printf '    %-22s %s\n' \
-    "ENV_NAME"       "$ENV_NAME   (also asked at the prompt, per account)" \
+    "ENV_NAME"       "$ENV_NAME   (also asked, per account)" \
     "PYTHON_VERSION" "$PYTHON_VERSION" \
     "GIT_NAME"       "$GIT_NAME" \
     "GIT_EMAIL"      "$GIT_EMAIL" \
-    "MAMBA_PACKAGES" "${#MAMBA_PACKAGES[@]} packages -- delete any line you do not want" \
-    "ML_PACKAGES"    "${#ML_PACKAGES[@]} packages, only with the ML stack" \
+    "MAMBA_PACKAGES" "${#MAMBA_PACKAGES[@]} -- delete any line you do not want" \
+    "ML_PACKAGES"    "${#ML_PACKAGES[@]} -- only with the ML stack" \
     "NODE_PACKAGES"  "${NODE_PACKAGES[*]}" \
     "HOME_DIRS"      "${HOME_DIRS[*]}" \
     "DOOM_REPO"      "$DOOM_REPO"
-  printf '\n  Templates it installs live in templates/ -- edit those to change the\n'
-  printf '  content of ~/.bashrc, the dotfiles, or ~/bin scripts.\n'
+  printf '\n  templates/ holds the CONTENT of ~/.bashrc, the dotfiles and ~/bin.\n'
 
   printf '\n\033[1mWHAT IT WILL NOT DO\033[0m\n\n'
-  printf '  replace or delete a file without naming it first, and showing the backup\n'
-  printf '  regenerate your ssh key -- it is registered with GitHub and other hosts\n'
-  printf '  delete a mamba env -- a new name creates a second one, and says so\n'
-  printf '  remove a directory without printing its size and contents, and\n'
-  printf '    requiring you to type DELETE\n'
-  printf '  escalate to sudo, once provision-ubuntu-server.sh has run\n'
+  printf '  replace or delete a file without naming it, and showing the backup\n'
+  printf '  regenerate your ssh key  |  delete a mamba env  |  escalate to sudo\n'
+  printf '  remove a directory without showing it and making you type DELETE\n'
   printf '  carry credentials between machines -- dotfiles are UI settings only\n\n'
   exit 0
 fi
