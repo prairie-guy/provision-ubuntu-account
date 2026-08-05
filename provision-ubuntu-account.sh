@@ -126,7 +126,6 @@ DO_CODEX=0
 SKIP_APT=0
 FORCE=0
 ONLY=""
-MAMBA_PKGS_OVERRIDE=""
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 skip() { printf '    \033[2m--  %s\033[0m\n' "$*"; }
@@ -184,31 +183,32 @@ run()  { if (( CHECK_ONLY )); then printf '    \033[2m[would run]\033[0m %s\n' "
 DOCTOR=0; HELP=0
 if [[ "${1:-}" == doctor ]]; then DOCTOR=1; shift; fi
 
+# Three things only. Every OTHER decision this script makes is a question it
+# asks you, and every value it uses is in the CONFIGURATION block above -- so
+# there is nothing left for a flag to do that is not either asked or edited.
+#
+# The deleted flags were not neutral conveniences. --only ran a partial
+# provision, which produced accounts that looked finished and were not.
+# --reinstall answered yes to everything at once, including the doom rebuild
+# that deletes ~/.config/emacs. --env and --python silently created a second
+# environment. Each was a way to do something consequential without being asked
+# about it, which is the opposite of what this script is for.
 while (( $# )); do
   case "$1" in
     --dry-run)    CHECK_ONLY=1; shift ;;
-    --check)      CHECK_ONLY=1; shift ;;   # old name for --dry-run; still works
-    --env)        ENV_NAME="${2:?--env needs a name}"; ENV_EXPLICIT=1; shift 2 ;;
-    --env=*)      ENV_NAME="${1#*=}"; ENV_EXPLICIT=1; shift ;;
-    --python)     PYTHON_VERSION="${2:?--python needs a version}"; shift 2 ;;
-    --python=*)   PYTHON_VERSION="${1#*=}"; shift ;;
-    --git-name)   GIT_NAME="${2:?}"; shift 2 ;;
-    --git-email)  GIT_EMAIL="${2:?}"; shift 2 ;;
-    --mamba-pkgs) MAMBA_PKGS_OVERRIDE="${2:?}"; shift 2 ;;
-    --ml)         DO_ML=1; shift ;;
-    --docker-rootless) DO_ROOTLESS=1; shift ;;
-    --claude)     DO_CLAUDE=1; shift ;;
-    --codex)      DO_CODEX=1; shift ;;
-    --no-apt)     SKIP_APT=1; shift ;;
-    --reinstall)  FORCE=1; shift ;;
-    --only)       ONLY="${2:?--only needs a comma-separated step list}"; shift 2 ;;
-    --only=*)     ONLY="${1#*=}"; shift ;;
     -h|--help)    HELP=1; shift ;;
-    *) die "unknown argument: $1 (try --help)" ;;
+    *) die "unknown argument: $1
+
+   This script takes no options beyond --dry-run and --help.
+   To choose what happens, run it and answer the questions:
+       ./provision-ubuntu-account.sh
+   To change a value (python version, package lists, git identity),
+   edit the CONFIGURATION block at the top of the script.
+   To see the current state of this account and what would change:
+       ./provision-ubuntu-account.sh --help
+       ./provision-ubuntu-account.sh doctor" ;;
   esac
 done
-
-[[ -n "$MAMBA_PKGS_OVERRIDE" ]] && read -r -a MAMBA_PACKAGES <<<"$MAMBA_PKGS_OVERRIDE"
 
 # Ask a yes/no question. Without a terminal it takes the default silently, so an
 # unattended run never blocks. `read` returns non-zero at EOF; tolerate it.
@@ -245,13 +245,6 @@ fi
 # rejected: a typo like --only dir would otherwise run nothing and exit 0,
 # looking like a successful provision.
 VALID_STEPS=(dirs bashrc loginshell git dotfiles ssh apt mamba node ml emacs dockerrootless claude codex)
-if [[ -n "$ONLY" ]]; then
-  IFS=, read -r -a _requested <<<"$ONLY"
-  for _s in "${_requested[@]}"; do
-    [[ " ${VALID_STEPS[*]} " == *" $_s "* ]] \
-      || die "unknown step '$_s'. Valid: ${VALID_STEPS[*]}"
-  done
-fi
 want() { [[ -z "$ONLY" ]] || [[ ",$ONLY," == *",$1,"* ]]; }
 
 # Optional installs. A flag already given is taken as the answer, so --ml and
@@ -375,9 +368,50 @@ if (( HELP )); then
   if dotfiles_differ; then printf '    %s\n' "${DOTFILES_DRIFT[@]/#$HOME/\~}"; _drift=1; fi
   (( _drift )) || printf '    nothing -- every managed file matches its template\n'
 
-  printf '\n  \033[1msteps\033[0m: %s\n' "${VALID_STEPS[*]}"
-  printf '\n  \033[1mdoctor\033[0m checks this account and offers to fix what it finds:\n'
-  printf '      ./provision-ubuntu-account.sh doctor\n\n'
+  printf '\n\033[1mWHAT A RUN WOULD ASK ABOUT\033[0m\n\n'
+  printf '  It walks these in order, asking one question each. A component that is\n'
+  printf '  absent is offered for install; one already present is offered for update;\n'
+  printf '  a managed file is only mentioned when it has actually drifted.\n\n'
+  printf '    %-16s %s\n' \
+    dirs        "~/bin ~/scratch ~/stuff ~/junk, and their README" \
+    bashrc      "~/.bashrc from templates/bashrc" \
+    loginshell  "makes sure a login shell reaches ~/.bashrc" \
+    git         "global user.name / user.email / init.defaultBranch" \
+    dotfiles    "gitignore, zellij config, Claude UI settings" \
+    ssh         "an ed25519 key, if this account has none" \
+    apt         "git curl wget bc less -- the only step that can use sudo" \
+    mamba       "miniforge3 + the $ENV_NAME env + ${#MAMBA_PACKAGES[@]} packages" \
+    node        "node + npm, inside that env" \
+    ml          "pytorch, polars, jupyterlab (~3GB) -- asked, default no" \
+    emacs       "clones the doom config, runs its own setup.sh" \
+    dockerrootless "a docker daemon this account owns, no docker group" \
+    claude      "Claude Code -- asked, default no" \
+    codex       "OpenAI Codex CLI -- asked, default no"
+
+  printf '\n\033[1mWHAT YOU CAN CHANGE, AND WHERE\033[0m\n\n'
+  printf '  There are no options for these. Edit the CONFIGURATION block at the top\n'
+  printf '  of %s -- each entry has a comment saying why it is\n' "$(basename "$0")"
+  printf '  what it is. They are properties of how you like an account built, not\n'
+  printf '  per-run decisions, so they live in the file and not on the command line.\n\n'
+  printf '    %-22s %s\n' \
+    "ENV_NAME"       "$ENV_NAME   (also asked at the prompt, per account)" \
+    "PYTHON_VERSION" "$PYTHON_VERSION" \
+    "GIT_NAME"       "$GIT_NAME" \
+    "GIT_EMAIL"      "$GIT_EMAIL" \
+    "MAMBA_PACKAGES" "${#MAMBA_PACKAGES[@]} packages -- delete any line you do not want" \
+    "ML_PACKAGES"    "${#ML_PACKAGES[@]} packages, only with the ML stack" \
+    "NODE_PACKAGES"  "${NODE_PACKAGES[*]}" \
+    "HOME_DIRS"      "${HOME_DIRS[*]}" \
+    "DOOM_REPO"      "$DOOM_REPO"
+  printf '\n  Templates it installs live in templates/ -- edit those to change the\n'
+  printf '  content of ~/.bashrc, the dotfiles, or ~/bin scripts.\n'
+
+  printf '\n\033[1mTHE ONLY THREE COMMANDS\033[0m\n\n'
+  printf '    ./provision-ubuntu-account.sh             ask, then do it\n'
+  printf '    ./provision-ubuntu-account.sh --dry-run   ask, then print what it would do\n'
+  printf '    ./provision-ubuntu-account.sh doctor      check this account, offer fixes\n\n'
+  printf '  Nothing is deleted without naming the file first. Files that are replaced\n'
+  printf '  are backed up to NAME.bak-<timestamp>. Your ssh key is never regenerated.\n\n'
   exit 0
 fi
 
@@ -398,12 +432,12 @@ if (( DOCTOR )); then
   # --- the env everything else lives in
   if [[ -d "$HOME/miniforge3" ]]; then doc_ok "miniforge3 installed"
   else doc_fail "miniforge3 is missing -- nothing in the env can work"
-       doc_fix "install miniforge3 and the env" "$SCRIPT_DIR/provision-ubuntu-account.sh --only mamba"; fi
+       doc_fix "install miniforge3 and the env" "$SCRIPT_DIR/provision-ubuntu-account.sh"; fi
   if [[ -d "$ENVDIR" ]]; then
     doc_ok "env '$ENV_NAME' exists (python $("$ENVDIR/bin/python" -V 2>/dev/null | awk '{print $2}'))"
   else
     doc_fail "env '$ENV_NAME' does not exist"
-    doc_fix "create the env" "$SCRIPT_DIR/provision-ubuntu-account.sh --only mamba"
+    doc_fix "create the env" "$SCRIPT_DIR/provision-ubuntu-account.sh"
   fi
   # ~/.bashrc activating an env that is not there leaves every new shell broken.
   if [[ -f "$HOME/.bashrc" ]]; then
@@ -411,7 +445,7 @@ if (( DOCTOR )); then
     if [[ -n "$_act" && ! -d "$HOME/miniforge3/envs/$_act" ]]; then
       doc_fail "~/.bashrc activates env '$_act', which does not exist"
       doc_note "every new shell will fail to activate it"
-      doc_fix "point ~/.bashrc at an env that exists" "$SCRIPT_DIR/provision-ubuntu-account.sh --only bashrc"
+      doc_fix "point ~/.bashrc at an env that exists" "$SCRIPT_DIR/provision-ubuntu-account.sh"
     elif [[ -n "$_act" ]]; then
       doc_ok "~/.bashrc activates env '$_act'"
     fi
@@ -425,18 +459,18 @@ if (( DOCTOR )); then
   done
   if [[ -z "$_first" ]]; then
     doc_fail "no ~/.bash_profile, ~/.bash_login or ~/.profile -- login shells never read ~/.bashrc"
-    doc_fix "create a minimal ~/.profile" "$SCRIPT_DIR/provision-ubuntu-account.sh --only loginshell"
+    doc_fix "create a minimal ~/.profile" "$SCRIPT_DIR/provision-ubuntu-account.sh"
   elif grep -q 'bashrc' "$_first" 2>/dev/null; then
     doc_ok "$(basename "$_first") sources ~/.bashrc"
   else
     doc_fail "$_first does not source ~/.bashrc -- login shells get a different environment"
-    doc_fix "fix the login shell chain" "$SCRIPT_DIR/provision-ubuntu-account.sh --only loginshell"
+    doc_fix "fix the login shell chain" "$SCRIPT_DIR/provision-ubuntu-account.sh"
   fi
 
   # --- drift. Only real differences, and never auto-fixed without listing them.
   if bashrc_differs; then
     doc_warn "~/.bashrc differs from the template"
-    doc_fix "review and replace ~/.bashrc (backup kept)" "$SCRIPT_DIR/provision-ubuntu-account.sh --only bashrc"
+    doc_fix "review and replace ~/.bashrc (backup kept)" "$SCRIPT_DIR/provision-ubuntu-account.sh"
   else
     doc_ok "~/.bashrc matches the template"
   fi
@@ -444,7 +478,7 @@ if (( DOCTOR )); then
     doc_warn "$(( ${#DIRS_DRIFT[@]} + ${#DIRS_STALE[@]} + ${#DOTFILES_DRIFT[@]} )) managed file(s) differ from their templates"
     for _f in "${DIRS_DRIFT[@]}" "${DOTFILES_DRIFT[@]}"; do doc_note "${_f/#$HOME/\~}"; done
     for _f in "${DIRS_STALE[@]}"; do doc_note "${_f/#$HOME/\~}  (stale, superseded by README.md)"; done
-    doc_fix "review and restore them (backups kept)" "$SCRIPT_DIR/provision-ubuntu-account.sh --only dirs,dotfiles"
+    doc_fix "review and restore them (backups kept)" "$SCRIPT_DIR/provision-ubuntu-account.sh"
   else
     doc_ok "managed dotfiles match their templates"
   fi
@@ -452,7 +486,7 @@ if (( DOCTOR )); then
   [[ -f "$HOME/.ssh/id_ed25519" ]] \
     && doc_ok "ssh key present" \
     || { doc_warn "no ssh key -- git pushes over ssh will fail"
-         doc_fix "generate one" "$SCRIPT_DIR/provision-ubuntu-account.sh --only ssh"; }
+         doc_fix "generate one" "$SCRIPT_DIR/provision-ubuntu-account.sh"; }
 
   # --- rootless docker: several separately-breakable pieces, each invisible
   # --- until a container fails to start.
@@ -466,13 +500,13 @@ if (( DOCTOR )); then
       || { doc_fail "no ~/.config/docker/daemon.json"
            doc_note "a rootless daemon reads NOTHING from /etc/docker: no log rotation"
            doc_note "(fills \$HOME), 64M shm, default memlock"
-           doc_fix "install it" "$SCRIPT_DIR/provision-ubuntu-account.sh --docker-rootless --only dockerrootless"; }
+           doc_fix "install it" "$SCRIPT_DIR/provision-ubuntu-account.sh"; }
     if [[ -f "$HOME/.config/nvidia-container-runtime/config.toml" ]] \
        && grep -Eq '^[[:space:]]*no-cgroups[[:space:]]*=[[:space:]]*true' "$HOME/.config/nvidia-container-runtime/config.toml"; then
       doc_ok "nvidia no-cgroups set -- GPU containers can start"
     elif command -v nvidia-ctk >/dev/null; then
       doc_fail "no-cgroups is NOT set -- GPU containers will not start under rootless"
-      doc_fix "write the account's nvidia config" "$SCRIPT_DIR/provision-ubuntu-account.sh --docker-rootless --only dockerrootless"
+      doc_fix "write the account's nvidia config" "$SCRIPT_DIR/provision-ubuntu-account.sh"
     fi
     if [[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" == yes ]]; then
       doc_ok "linger enabled -- the daemon survives logout"
