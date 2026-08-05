@@ -260,6 +260,18 @@ have_ml()     { [[ -x "$ENVDIR/bin/python" ]] && "$ENVDIR/bin/python" -c 'import
 have_claude() { command -v claude >/dev/null || [[ -x "$HOME/.local/bin/claude" ]]; }
 have_codex()  { [[ -x "$ENVDIR/bin/codex" ]]; }
 have_doom()   { [[ -d "$HOME/.config/emacs" ]]; }
+
+# Is there actually anything newer? Unlike apt, conda cannot answer from a local
+# cache -- it needs a solve, ~15s. So this runs ONLY after you have already said
+# yes to updating, never during the questions, and never for --help or doctor.
+# mamba's own dry run is the authority; "All requested packages already
+# installed" is its wording for "nothing would change".
+mamba_up_to_date() {
+  local env="$1"; shift
+  local out
+  out="$("$HOME/miniforge3/bin/mamba" install -n "$env" -y --dry-run "$@" 2>&1)" || return 1
+  [[ "$out" == *"All requested packages already installed"* ]]
+}
 have_rootless_docker() { [[ -S "/run/user/$(id -u)/docker.sock" ]] || systemctl --user is-enabled docker >/dev/null 2>&1; }
 
 # "differs" = the file exists but no longer matches the template. A file that is
@@ -859,6 +871,17 @@ if want mamba; then
   done
   if (( ${#MAMBA_PACKAGES[@]} )) && (( ! _pkgs_missing )) && (( ! FORCE_MAMBA )); then
     skip "mamba packages already present in '$ENV_NAME'"
+  elif (( ${#MAMBA_PACKAGES[@]} )) && (( FORCE_MAMBA )) && (( ! _pkgs_missing )); then
+    # You asked to update packages that are all present. Find out whether that
+    # means anything before doing it, so "update them?" cannot cost a full
+    # reinstall to discover there was nothing to update.
+    log "checking for newer versions (a solve, ~15s)"
+    if mamba_up_to_date "$ENV_NAME" "${MAMBA_PACKAGES[@]}"; then
+      skip "mamba packages in '$ENV_NAME' are already current; nothing to update"
+    else
+      log "mamba update: ${MAMBA_PACKAGES[*]}"
+      run "$MAMBA" install -n "$ENV_NAME" -y "${MAMBA_PACKAGES[@]}"
+    fi
   elif (( ${#MAMBA_PACKAGES[@]} )); then
     log "mamba install: ${MAMBA_PACKAGES[*]}"
     run "$MAMBA" install -n "$ENV_NAME" -y "${MAMBA_PACKAGES[@]}"
@@ -876,6 +899,14 @@ if want node; then
   fi
   if [[ -x "$HOME/miniforge3/envs/$ENV_NAME/bin/node" ]] && (( ! FORCE_NODE )); then
     skip "node already in env '$ENV_NAME'"
+  elif have_node && (( FORCE_NODE )); then
+    log "checking for a newer node (a solve, ~15s)"
+    if mamba_up_to_date "$ENV_NAME" "${NODE_PACKAGES[@]}"; then
+      skip "node in '$ENV_NAME' is already current; nothing to update"
+    else
+      log "updating node/npm in env '$ENV_NAME'"
+      run "$MAMBA" install -n "$ENV_NAME" -y "${NODE_PACKAGES[@]}"
+    fi
   else
     log "installing node/npm into env '$ENV_NAME': ${NODE_PACKAGES[*]}"
     run "$MAMBA" install -n "$ENV_NAME" -y "${NODE_PACKAGES[@]}"
@@ -898,8 +929,19 @@ if want ml && (( DO_ML )); then
     else
       warn "no GPU detected; the solver will select CPU builds of the same packages"
     fi
-    log "installing ML stack into '$ENV_NAME' (~3GB): ${ML_PACKAGES[*]}"
-    run "$MAMBA" install -n "$ENV_NAME" -y "${ML_PACKAGES[@]}"
+    if have_ml && (( FORCE_ML )); then
+      # ~3GB of packages. Worth 15 seconds to find out whether any of it moved.
+      log "checking for newer versions (a solve, ~15s)"
+      if mamba_up_to_date "$ENV_NAME" "${ML_PACKAGES[@]}"; then
+        skip "the ML stack in '$ENV_NAME' is already current; nothing to update"
+      else
+        log "updating ML stack in '$ENV_NAME': ${ML_PACKAGES[*]}"
+        run "$MAMBA" install -n "$ENV_NAME" -y "${ML_PACKAGES[@]}"
+      fi
+    else
+      log "installing ML stack into '$ENV_NAME' (~3GB): ${ML_PACKAGES[*]}"
+      run "$MAMBA" install -n "$ENV_NAME" -y "${ML_PACKAGES[@]}"
+    fi
   fi
 fi
 
